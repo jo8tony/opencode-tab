@@ -333,7 +333,7 @@ async function renderCalls(view) {
   modelInput.addEventListener("keydown", (e) => { if (e.key === "Enter") apply(); });
   modelInput.addEventListener("change", apply);
 
-  const statusSel = el("select",
+  const statusSel = el("select", null,
     el("option", { value: "", text: "全部状态" }),
     el("option", { value: "ok", text: "成功" }),
     el("option", { value: "error", text: "错误" }),

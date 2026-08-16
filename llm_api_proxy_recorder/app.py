@@ -18,6 +18,19 @@ from llm_api_proxy_recorder.recording.store import CallStore
 PROXY_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
 
 
+class NoCacheStaticFiles(StaticFiles):
+    """Web UI 静态资源：允许缓存但每次强制重新验证（no-cache）。
+
+    无此头时浏览器走启发式缓存，代码更新后页面可能长期停留在旧 JS。
+    未变更文件仍可 304 快速返回，不影响性能。
+    """
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 class RuntimeState:
     """运行时共享状态：配置、上游客户端、落盘存储。"""
 
@@ -68,7 +81,7 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
     def admin_root() -> RedirectResponse:
         return RedirectResponse(url=f"{cfg.server.admin_prefix}/")
 
-    app.mount(f"{cfg.server.admin_prefix}", StaticFiles(directory=str(static_dir), html=True), name="ui")
+    app.mount(f"{cfg.server.admin_prefix}", NoCacheStaticFiles(directory=str(static_dir), html=True), name="ui")
 
     # 兜底透明代理路由；/{path:path} 不匹配根路径 "/"，需单独注册
     app.add_api_route("/", proxy_endpoint, methods=PROXY_METHODS)

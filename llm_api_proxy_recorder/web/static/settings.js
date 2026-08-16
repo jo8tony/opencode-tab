@@ -78,7 +78,7 @@ function renderSettings(view) {
         keyIn.type = show ? "text" : "password";
         eye.textContent = show ? "隐藏" : "显示";
       } });
-      const stratSel = el("select",
+      const stratSel = el("select", null,
         el("option", { value: "replace", text: "replace（注入上游密钥）" }),
         el("option", { value: "keep", text: "keep（透传客户端密钥）" }));
       stratSel.value = u.key_strategy || "replace";
