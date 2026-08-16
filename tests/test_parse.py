@@ -7,12 +7,14 @@ import zlib
 from llm_api_proxy_recorder.recording.parse import (
     chunks_to_raw_texts,
     diff_new_messages,
+    extract_session_header,
     first_user_preview,
     make_inflater,
     message_digest,
     parse_nonsse_body,
     parse_request_body,
     parse_sse_captured,
+    session_key_from_header,
     session_key_of,
 )
 
@@ -199,6 +201,33 @@ def test_session_key_segmented_content():
     segs = [{"role": "user", "content": [{"type": "text", "text": "看图"},
                                          {"type": "image_url", "image_url": {"url": "x"}}]}]
     assert session_key_of("m", plain) == session_key_of("m", segs)
+
+
+def test_extract_session_header_priority_case_and_blank():
+    # 大小写不敏感
+    assert extract_session_header({"X-Session-Id": "abc"}, ["x-session-id"]) == "abc"
+    # 配置顺序即优先级：先命中的先用
+    hdrs = {"a-session": "1", "b-session": "2"}
+    assert extract_session_header(hdrs, ["a-session", "b-session"]) == "1"
+    assert extract_session_header(hdrs, ["b-session", "a-session"]) == "2"
+    # 空白值跳过，取下一个
+    assert extract_session_header({"a-session": " ", "b-session": "2"}, ["a-session", "b-session"]) == "2"
+    # 未配置 / 无头 / 无命中 → None
+    assert extract_session_header({"x": "1"}, []) is None
+    assert extract_session_header(None, ["x-session-id"]) is None
+    assert extract_session_header({"x": "1"}, ["x-session-id"]) is None
+
+
+def test_session_key_from_header():
+    assert session_key_from_header(None) is None
+    assert session_key_from_header("") is None
+    assert session_key_from_header("   ") is None
+    k = session_key_from_header("sess-1")
+    assert k is not None and k.startswith("h") and len(k) == 17
+    assert session_key_from_header("sess-1") == k  # 同值稳定
+    assert session_key_from_header(" sess-1 ") == k  # 去除首尾空白
+    assert session_key_from_header("sess-2") != k
+    assert k != session_key_of("m", [SYS, U1])  # 与内容哈希键（s 前缀）不冲突
 
 
 def test_first_user_preview():

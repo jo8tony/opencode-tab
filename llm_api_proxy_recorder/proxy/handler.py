@@ -263,6 +263,7 @@ async def proxy_endpoint(request: Request):
             "rc": rc, "t_start": t_start, "t_sent": t_sent, "t_first_byte": None,
             "t_end": time.perf_counter(), "chunks": [], "is_sse": False,
             "encoding": "", "net_chunk_count": 0, "status": "error",
+            "session_header": session_header_val,
         })
         return JSONResponse(
             status_code=502,

@@ -732,3 +732,47 @@ async def test_trajectory_solo_group_for_non_chat_calls(stack):
     for s in solos:
         assert s["session_key"].startswith("solo:")
         assert s["calls"] == 1
+
+
+async def test_trajectory_session_header_attribution(stack):
+    """会话归属头命中 → 头值优先聚合（h 键）：内容不同也同轨；不同头值分轨。"""
+    before = len(_index_rows(stack["records_dir"]))
+    async with httpx.AsyncClient(timeout=30) as client:
+        # 两条内容完全不同的请求携带同一头值 → 同一会话（内容哈希会拆成两个）
+        for content in ("头归属第一条问题", "内容完全不同的第二条"):
+            r = await client.post(
+                f"{stack['proxy']}/v1/chat/completions",
+                json={"model": "mock-model", "messages": [{"role": "user", "content": content}]},
+                headers={"X-DeepSeek-Harness-Session-Id": "trj-hdr-1"},
+            )
+            assert r.status_code == 200
+        # 另一头名（默认列表第 2 位）不同头值 → 不同会话
+        r = await client.post(
+            f"{stack['proxy']}/v1/chat/completions",
+            json={"model": "mock-model", "messages": [{"role": "user", "content": "头归属第一条问题"}]},
+            headers={"x-session-id": "trj-hdr-2"},
+        )
+        assert r.status_code == 200
+    rows = _wait_for_records(stack["records_dir"], before + 3)
+    new_keys = {r["session_key"] for r in rows[before:]}
+    assert len(new_keys) == 2
+    assert all(k and k.startswith("h") and len(k) == 17 for k in new_keys)
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(f"{stack['proxy']}{ADMIN}/api/trajectory/sessions")
+        target = next(
+            s for s in r.json()["sessions"]
+            if s["session_key"].startswith("h") and s["calls"] == 2
+            and s["preview"] == "头归属第一条问题"
+        )
+        assert target["solo"] is False
+        assert target["model"] == "mock-model"
+
+        detail = (
+            await client.get(f"{stack['proxy']}{ADMIN}/api/trajectory/sessions/{target['session_key']}")
+        ).json()
+        assert detail["calls"] == 2
+        # 头值优先：第二条内容与第一条无公共前缀，仍归入同一会话且各成一笔增量
+        assert detail["turns"][0]["new_messages"] == [{"role": "user", "content": "头归属第一条问题"}]
+        assert detail["turns"][1]["new_messages"] == [{"role": "user", "content": "内容完全不同的第二条"}]
+        assert detail["cumulative_usage"]["total_tokens"] == 19 * 2

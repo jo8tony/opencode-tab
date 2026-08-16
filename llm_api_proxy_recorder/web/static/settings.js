@@ -155,6 +155,7 @@ function renderSettings(view) {
     /* ---------------- 记录设置 */
     const dirIn = el("input", { type: "text", value: cfg.recording.dir, class: "mono", placeholder: "~/.llm-api-proxy-recorder/records" });
     const rhIn = el("input", { type: "text", value: (cfg.recording.redact_headers || []).join(", "), class: "mono", placeholder: "authorization, x-api-key, …" });
+    const shIn = el("input", { type: "text", value: (cfg.recording.session_id_headers || []).join(", "), class: "mono", placeholder: "x-deepseek-harness-session-id, x-session-id, …" });
     const maxIn = el("input", { type: "number", value: cfg.recording.max_capture_mb, min: "0.1", step: "0.5", style: { width: "120px" } });
     const mkSwitch = (label, checked) => {
       const input = el("input", { type: "checkbox", checked });
@@ -170,6 +171,8 @@ function renderSettings(view) {
         el("div", { class: "field full" }, el("label", { class: "f-label", text: "记录目录 dir" }), dirIn,
           el("div", { class: "f-hint", text: "支持 ~ 展开；修改后立即对新记录生效" })),
         el("div", { class: "field full" }, el("label", { class: "f-label", text: "脱敏头列表 redact_headers（逗号分隔）" }), rhIn),
+        el("div", { class: "field full" }, el("label", { class: "f-label", text: "会话归属头 session_id_headers（逗号分隔，按优先级）" }), shIn,
+          el("div", { class: "f-hint", text: "请求命中列表中的头（大小写不敏感）即按头值聚合轨迹，优先于内容哈希；留空 = 仅按内容聚合" })),
         redactSw, rrqSw, rspSw, rchunkSw,
         el("div", { class: "field" }, el("label", { class: "f-label", text: "单次捕获上限 max_capture_mb" }), maxIn,
           el("div", { class: "f-hint", text: "请求/响应体超过该大小将被截断记录" })))));
@@ -209,6 +212,7 @@ function renderSettings(view) {
           dir: dirIn.value.trim() || "~/.llm-api-proxy-recorder/records",
           redact: redactChk.checked,
           redact_headers: splitCsv(rhIn.value),
+          session_id_headers: splitCsv(shIn.value),
           record_request_headers: rrqChk.checked,
           record_response_headers: rspChk.checked,
           record_raw_chunks: rchunkChk.checked,
