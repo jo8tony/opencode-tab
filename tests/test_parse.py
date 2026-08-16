@@ -16,6 +16,7 @@ from llm_api_proxy_recorder.recording.parse import (
     parse_sse_captured,
     session_key_from_header,
     session_key_of,
+    system_text,
 )
 
 
@@ -236,6 +237,21 @@ def test_first_user_preview():
     assert pv == "很长的 多行问题xx"  # 换行折叠为空格 + 按 10 字符截断
     assert first_user_preview(None) == ""
     assert first_user_preview([SYS]) == ""
+
+
+def test_system_text():
+    assert system_text(None) == ""
+    assert system_text([]) == ""
+    assert system_text([U1]) == ""  # 无 system 消息
+    assert system_text([SYS, U1]) == "你是助手"
+    # 分段数组 content
+    seg = {"role": "system", "content": [{"type": "text", "text": "部分一"}, {"type": "text", "text": "部分二"}]}
+    assert system_text([seg, U1]) == "部分一 部分二"
+    # 多条 system 以空行连接；空白内容跳过；非法条目忽略
+    s2 = {"role": "system", "content": "补充"}
+    assert system_text([SYS, s2, U1]) == "你是助手\n\n补充"
+    assert system_text([SYS, {"role": "system", "content": "   "}]) == "你是助手"
+    assert system_text(["bad", SYS]) == "你是助手"
 
 
 # ================================================================ 消息增量

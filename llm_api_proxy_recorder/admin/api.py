@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from llm_api_proxy_recorder import __version__
 from llm_api_proxy_recorder.config import AppConfig, resolved_records_dir, save_config
-from llm_api_proxy_recorder.recording.parse import diff_new_messages, message_digest
+from llm_api_proxy_recorder.recording.parse import diff_new_messages, message_digest, system_text
 
 logger = logging.getLogger("llm_api_proxy_recorder")
 
@@ -285,6 +285,15 @@ def trajectory_session_detail(key: str, request: Request, q: str | None = Query(
                 "cumulative_usage": dict(cum),
                 "tools": parsed_req.get("tools"),
                 "params": parsed_req.get("params"),
+                # —— Inspector Tab 化所需的小字段（数据已在手，边际成本极低）——
+                "system": system_text(messages),
+                "messages_count": len(messages) if isinstance(messages, list) else 0,
+                "upstream_name": rec.get("upstream_name"),
+                "method": req.get("method"),
+                "path": req.get("path"),
+                "request_headers": req.get("headers"),
+                "response_headers": resp.get("headers"),
+                "chunk_count": resp.get("chunk_count"),
                 "error": rec.get("error"),
             }
         )

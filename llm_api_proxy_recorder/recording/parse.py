@@ -192,6 +192,22 @@ def session_key_of(model: str | None, messages: list[Any] | None) -> str | None:
     return "s" + hashlib.sha1(key_src.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
+def system_text(messages: list[Any] | None) -> str:
+    r"""提取 messages 中全部 role=system 消息的文本（str 或分段数组），多条以 \n\n 连接。
+
+    供轨迹 System Prompt 展示与前后轮 diff 使用。
+    """
+    if not isinstance(messages, list):
+        return ""
+    parts: list[str] = []
+    for m in messages:
+        if isinstance(m, dict) and m.get("role") == "system":
+            text = _content_text(m.get("content")).strip()
+            if text:
+                parts.append(text)
+    return "\n\n".join(parts)
+
+
 def first_user_preview(messages: list[Any] | None, limit: int = 80) -> str:
     """首条 user 消息预览（会话列表展示用）。"""
     if isinstance(messages, list):

@@ -717,6 +717,17 @@ async def test_trajectory_sessions_list_and_detail(stack):
             assert t["duration_ms"] > 0
             assert t["usage"]["total_tokens"] == 19
 
+        # Inspector Tab 化新增字段：system 文本 / 头部 / 上游 / 分块 / 上下文规模
+        assert [t["messages_count"] for t in turns] == [1, 3, 5]
+        assert all(t["system"] == "" for t in turns)  # 本会话无 system 消息
+        for t in turns:
+            assert t["method"] == "POST"
+            assert t["path"] == "/v1/chat/completions"
+            assert t["upstream_name"] == "main"
+            assert isinstance(t["request_headers"], dict) and t["request_headers"]
+            assert isinstance(t["response_headers"], dict) and t["response_headers"]
+            assert isinstance(t["chunk_count"], int) and t["chunk_count"] >= 1
+
         # 累计用量递增
         assert t1["cumulative_usage"]["total_tokens"] == 19
         assert t2["cumulative_usage"]["total_tokens"] == 38
