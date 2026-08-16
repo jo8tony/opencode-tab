@@ -164,6 +164,47 @@ def get_call(call_id: str, request: Request):
     return rec
 
 
+@router.delete("/calls/{call_id}")
+def delete_call(call_id: str, request: Request):
+    store = request.app.state.runtime.store
+    if not store.delete_call(call_id):
+        return JSONResponse(status_code=404, content={"detail": "call not found"})
+    return {"ok": True, "deleted": 1}
+
+
+# ------------------------------------------------------------------ /records 清理
+@router.get("/records/stats")
+def records_stats(request: Request) -> dict:
+    """存储统计：每日期记录数 / 文件数 / 磁盘占用。"""
+    return request.app.state.runtime.store.stats()
+
+
+@router.delete("/records/date/{date}")
+def records_delete_date(date: str, request: Request):
+    store = request.app.state.runtime.store
+    if date not in store.available_dates():
+        return JSONResponse(status_code=404, content={"detail": f"日期 {date} 无记录"})
+    n = store.delete_date(date)
+    return {"ok": True, "deleted": n}
+
+
+@router.delete("/records/all")
+def records_delete_all(request: Request):
+    r = request.app.state.runtime.store.delete_all()
+    return {"ok": True, **r}
+
+
+@router.post("/records/cleanup")
+def records_cleanup(request: Request) -> dict:
+    """手动执行保留策略清理（retention_days>0 时删除更早日期）。"""
+    cfg: AppConfig = request.app.state.runtime.config
+    days = cfg.recording.retention_days
+    if days <= 0:
+        return {"ok": True, "retention_days": days, "removed_dates": [], "deleted": 0}
+    removed = request.app.state.runtime.store.cleanup_older_than(days)
+    return {"ok": True, "retention_days": days, "removed_dates": removed, "deleted": len(removed)}
+
+
 # ------------------------------------------------------------------ /trajectory
 def _session_group_key(row: dict) -> str:
     """无会话归属的旧记录/非对话调用：每条自成一组的 solo 键。"""

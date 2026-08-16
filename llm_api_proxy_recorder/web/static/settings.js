@@ -156,7 +156,8 @@ function renderSettings(view) {
     const dirIn = el("input", { type: "text", value: cfg.recording.dir, class: "mono", placeholder: "~/.llm-api-proxy-recorder/records" });
     const rhIn = el("input", { type: "text", value: (cfg.recording.redact_headers || []).join(", "), class: "mono", placeholder: "authorization, x-api-key, …" });
     const shIn = el("input", { type: "text", value: (cfg.recording.session_id_headers || []).join(", "), class: "mono", placeholder: "x-deepseek-harness-session-id, x-session-id, …" });
-    const maxIn = el("input", { type: "number", value: cfg.recording.max_capture_mb, min: "0.1", step: "0.5", style: { width: "120px" } });
+    const maxIn = el("input", { type: "number", value: cfg.recording.max_capture_mb, min: "0.1", step: "0.5", style: "width:120px" });
+    const retainIn = el("input", { type: "number", value: cfg.recording.retention_days != null ? cfg.recording.retention_days : 0, min: "0", step: "1", style: "width:120px" });
     const mkSwitch = (label, checked) => {
       const input = el("input", { type: "checkbox", checked });
       return [el("label", { class: "switch" }, input, el("span", { class: "slider" }), el("span", { class: "switch-label", text: label })), input];
@@ -175,7 +176,106 @@ function renderSettings(view) {
           el("div", { class: "f-hint", text: "请求命中列表中的头（大小写不敏感）即按头值聚合轨迹，优先于内容哈希；留空 = 仅按内容聚合" })),
         redactSw, rrqSw, rspSw, rchunkSw,
         el("div", { class: "field" }, el("label", { class: "f-label", text: "单次捕获上限 max_capture_mb" }), maxIn,
-          el("div", { class: "f-hint", text: "请求/响应体超过该大小将被截断记录" })))));
+          el("div", { class: "f-hint", text: "请求/响应体超过该大小将被截断记录" })),
+        el("div", { class: "field" }, el("label", { class: "f-label", text: "保留天数 retention_days" }), retainIn,
+          el("div", { class: "f-hint", text: "0 = 永久保留；>0 时启动与每小时自动删除更早日期的记录（保存后生效）" })))));
+
+    /* ---------------- 数据清理 */
+    function fmtBytes(b) {
+      const v = Number(b) || 0;
+      if (v < 1024) return v + " B";
+      if (v < 1048576) return (v / 1024).toFixed(1) + " KB";
+      if (v < 1073741824) return (v / 1048576).toFixed(1) + " MB";
+      return (v / 1073741824).toFixed(2) + " GB";
+    }
+    const cleanBox = el("div");
+    async function loadStats() {
+      cleanBox.replaceChildren(el("div", { class: "loading", text: "统计中…" }));
+      let s;
+      try {
+        s = await api("records/stats", { silent: true });
+      } catch (e) {
+        cleanBox.replaceChildren(el("div", { class: "empty-hint", text: "读取存储统计失败：" + e.message }));
+        return;
+      }
+      cleanBox.replaceChildren();
+      if (!(s.dates || []).length) {
+        cleanBox.append(emptyBox("暂无记录", "代理转发请求后，这里会展示存储占用"));
+        return;
+      }
+      const tb = el("tbody");
+      s.dates.forEach((d) => {
+        const delBtn = el("button", { class: "btn btn-xs btn-danger", type: "button", text: "删除" });
+        delBtn.addEventListener("click", async () => {
+          if (!confirm(`确定删除 ${d.date} 的全部 ${d.calls} 条记录？此操作不可恢复。`)) return;
+          delBtn.disabled = true;
+          try {
+            const r = await api("records/date/" + d.date, { method: "DELETE", silent: true });
+            toast(`已删除 ${d.date}（${r.deleted} 条）`, "ok");
+            loadStats();
+          } catch (e) {
+            toast("删除失败：" + (e.detail || e.message), "error");
+            delBtn.disabled = false;
+          }
+        });
+        tb.append(el("tr", null,
+          el("td", { class: "mono", text: d.date }),
+          el("td", { class: "mono num", text: fmtNum(d.calls) }),
+          el("td", { class: "mono num", text: fmtNum(d.files) }),
+          el("td", { class: "mono num", title: fmtNum(d.bytes), text: fmtBytes(d.bytes) }),
+          el("td", null, delBtn)));
+      });
+      cleanBox.append(
+        el("div", { class: "meta-line", text: `合计：${fmtNum(s.total_files)} 个文件 · ${fmtBytes(s.total_bytes)}` }),
+        el("div", { class: "tbl-wrap" }, el("table", { class: "tbl" },
+          el("thead", null, el("tr", null,
+            el("th", { text: "日期" }), el("th", { text: "记录数", class: "num" }),
+            el("th", { text: "文件数", class: "num" }), el("th", { text: "磁盘占用", class: "num" }),
+            el("th", { text: "操作" }))),
+          tb)));
+    }
+    loadStats();
+
+    const purgeBtn = el("button", { class: "btn btn-danger", type: "button", text: "清空全部记录" });
+    purgeBtn.addEventListener("click", async () => {
+      if (!confirm("确定清空全部记录？所有日期的调用记录与索引都将被删除，不可恢复。")) return;
+      if (!confirm("再次确认：真的要清空全部记录？")) return;
+      purgeBtn.disabled = true;
+      purgeBtn.textContent = "清空中…";
+      try {
+        const r = await api("records/all", { method: "DELETE", silent: true });
+        toast(`已清空 ${r.dates} 个日期、${fmtNum(r.calls)} 条记录`, "ok");
+        loadStats();
+      } catch (e) {
+        toast("清空失败：" + (e.detail || e.message), "error");
+      }
+      purgeBtn.disabled = false;
+      purgeBtn.textContent = "清空全部记录";
+    });
+
+    const sweepBtn = el("button", { class: "btn", type: "button", text: "立即执行保留清理" });
+    sweepBtn.addEventListener("click", async () => {
+      sweepBtn.disabled = true;
+      try {
+        const r = await api("records/cleanup", { method: "POST", silent: true });
+        if ((r.removed_dates || []).length) {
+          toast(`已删除 ${r.deleted} 个过期日期：${r.removed_dates.join("、")}`, "ok");
+        } else {
+          toast(`没有过期记录（保留 ${r.retention_days} 天）`, "ok");
+        }
+        loadStats();
+      } catch (e) {
+        toast("清理失败：" + (e.detail || e.message), "error");
+      }
+      sweepBtn.disabled = false;
+    });
+
+    view.append(el("section", { class: "card", style: "border-left:3px solid var(--red)" },
+      el("div", { class: "card-head-row" },
+        el("h2", { text: "数据清理" }),
+        el("span", { class: "empty-hint", text: "删除立即生效且不可恢复，请谨慎操作" })),
+      cleanBox,
+      el("div", { class: "up-actions" }, sweepBtn, purgeBtn)));
 
     /* ---------------- 服务设置 */
     const hostIn = el("input", { type: "text", value: cfg.server.host, class: "mono" });
@@ -217,6 +317,7 @@ function renderSettings(view) {
           record_response_headers: rspChk.checked,
           record_raw_chunks: rchunkChk.checked,
           max_capture_mb: parseFloat(maxIn.value) || 20,
+          retention_days: Math.max(0, parseInt(retainIn.value, 10) || 0),
         },
       };
       saveBtn.disabled = true;

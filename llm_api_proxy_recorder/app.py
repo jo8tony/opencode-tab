@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,7 +17,25 @@ from llm_api_proxy_recorder.proxy.client import UpstreamClient
 from llm_api_proxy_recorder.proxy.handler import proxy_endpoint
 from llm_api_proxy_recorder.recording.store import CallStore
 
+logger = logging.getLogger("llm_api_proxy_recorder")
+
 PROXY_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+
+# 保留策略自动清理间隔
+RETENTION_SWEEP_SECONDS = 3600
+
+
+async def _retention_sweep(runtime: "RuntimeState") -> None:
+    """按 retention_days 清理过期日期记录；异常只记日志，绝不影响代理。"""
+    days = runtime.config.recording.retention_days
+    if days <= 0:
+        return
+    try:
+        removed = await asyncio.to_thread(runtime.store.cleanup_older_than, days)
+        if removed:
+            logger.info("保留策略清理：retention=%d 天，删除日期 %s", days, ", ".join(removed))
+    except Exception:
+        logger.warning("保留策略清理失败", exc_info=True)
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -58,8 +78,20 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        yield
-        await runtime.aclose()
+        # 启动即执行一次保留清理，此后每小时一次；失败不影响服务
+        await _retention_sweep(runtime)
+
+        async def _loop() -> None:
+            while True:
+                await asyncio.sleep(RETENTION_SWEEP_SECONDS)
+                await _retention_sweep(runtime)
+
+        sweeper = asyncio.create_task(_loop())
+        try:
+            yield
+        finally:
+            sweeper.cancel()
+            await runtime.aclose()
 
     app = FastAPI(title="llm-api-proxy-recorder", lifespan=lifespan)
     app.state.runtime = runtime

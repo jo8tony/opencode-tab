@@ -584,10 +584,25 @@ async function renderCallDetail(view, id) {
   }
   view.replaceChildren();
 
-  // 顶部：返回 + id
+  // 顶部：返回 + id + 删除
+  const delBtn = el("button", { class: "btn btn-xs btn-danger", type: "button", text: "删除记录" });
+  delBtn.addEventListener("click", async () => {
+    if (!confirm(`确定删除记录 ${id}？此操作不可恢复。`)) return;
+    delBtn.disabled = true;
+    try {
+      await api("calls/" + encodeURIComponent(id), { method: "DELETE", silent: true });
+      toast("已删除记录", "ok");
+      location.hash = "#/calls";
+    } catch (e) {
+      toast("删除失败：" + (e.detail || e.message), "error");
+      delBtn.disabled = false;
+    }
+  });
   view.append(el("div", { class: "detail-top" },
     el("a", { class: "btn btn-ghost", href: "#/calls", text: "← 返回列表" }),
-    el("span", { class: "mono dim", text: rec.id })));
+    el("span", { class: "mono dim", text: rec.id }),
+    el("span", { class: "filter-spacer" }),
+    delBtn));
 
   // 概要条
   const resp = rec.response || {};

@@ -66,6 +66,8 @@ class RecordingConfig(BaseModel):
     record_response_headers: bool = True
     record_raw_chunks: bool = False
     max_capture_mb: float = 20
+    # 保留策略：删除早于 N 天的记录日期（0 = 永久保留）。启动时与每小时执行一次。
+    retention_days: int = Field(0, ge=0, le=36500)
 
 
 class AppConfig(BaseModel):

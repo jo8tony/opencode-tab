@@ -832,3 +832,51 @@ async def test_upstream_broken_stream_records_partial(stack):
     assert rec["response"]["chunk_count"] > 0
     # partial 占位已被定稿清理
     assert not _partial_path(stack["records_dir"], rec["id"]).exists()
+
+
+async def test_records_cleanup_endpoints(stack):
+    """数据清理端点：统计 / 单条删除 / 按日期删除 / 保留清理 / 清空全部。
+
+    放在文件末尾执行：会清空全部记录，影响后续依赖历史数据的用例。
+    """
+    base = f"{stack['proxy']}{ADMIN}/api"
+    async with httpx.AsyncClient(timeout=30) as client:
+        # 统计：有数据、按日期列出
+        stats = await client.get(f"{base}/records/stats")
+        assert stats.status_code == 200
+        s = stats.json()
+        assert s["total_bytes"] > 0 and s["total_files"] > 0
+        assert s["dates"], "前置用例应已产生记录"
+        today = datetime.now().astimezone().date().isoformat()
+        assert any(d["date"] == today for d in s["dates"])
+
+        # 单条删除：列表取一条 → 删除 → 详情 404、索引行消失
+        calls = await client.get(f"{base}/calls?page=1&page_size=1")
+        cid = calls.json()["items"][0]["id"]
+        total_before = calls.json()["total"]
+        r = await client.delete(f"{base}/calls/{cid}")
+        assert r.status_code == 200 and r.json() == {"ok": True, "deleted": 1}
+        assert (await client.get(f"{base}/calls/{cid}")).status_code == 404
+        calls_after = await client.get(f"{base}/calls?page=1&page_size=1")
+        assert calls_after.json()["total"] == total_before - 1
+
+        # 不存在的单条 → 404
+        assert (await client.delete(f"{base}/calls/c99991231_000000_none")).status_code == 404
+
+        # 保留清理：retention_days=0（默认配置）→ 无操作
+        sweep = await client.post(f"{base}/records/cleanup")
+        assert sweep.status_code == 200
+        assert sweep.json()["removed_dates"] == []
+
+        # 按日期删除今天（前置全部记录均为今日）→ 剩余为空
+        r = await client.delete(f"{base}/records/date/{today}")
+        assert r.status_code == 200 and r.json()["deleted"] >= 1
+        assert (await client.delete(f"{base}/records/date/{today}")).status_code == 404
+        assert (await client.get(f"{base}/calls")).json()["total"] == 0
+
+        # 清空全部：再无日期
+        r = await client.delete(f"{base}/records/all")
+        assert r.status_code == 200
+        assert r.json()["dates"] == 0
+        s2 = (await client.get(f"{base}/records/stats")).json()
+        assert s2["dates"] == [] and s2["total_bytes"] == 0

@@ -10,8 +10,9 @@ import json
 import logging
 import os
 import re
+import shutil
 import tempfile
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from llm_api_proxy_recorder.recording.models import date_from_call_id
@@ -137,3 +138,138 @@ class CallStore:
             if d.is_dir() and _DATE_RE.fullmatch(d.name)
         ]
         return sorted(dates, reverse=True)
+
+    # ---------------------------------------------------------------- delete
+    def _remove_index_line(self, date: str, call_id: str) -> None:
+        """从当日索引 JSONL 中移除 id 匹配的行（原子重写）。"""
+        path = self.index_dir / f"{date}.jsonl"
+        if not path.exists():
+            return
+        kept: list[str] = []
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    row = json.loads(stripped)
+                except Exception:
+                    kept.append(stripped)  # 坏行原样保留
+                    continue
+                if isinstance(row, dict) and row.get("id") == call_id:
+                    continue
+                kept.append(stripped)
+        _atomic_write(path, "\n".join(kept) + ("\n" if kept else ""))
+
+    def delete_call(self, call_id: str, date: str | None = None) -> bool:
+        """删除单条记录（final + partial + 索引行）；返回是否删到东西。"""
+        dates = [date] if date is not None else self.available_dates()
+        deleted = False
+        for d in dates:
+            dir_ = self.calls_dir / d
+            for name in (f"{call_id}.json", f"{call_id}.partial.json"):
+                p = dir_ / name
+                if p.exists():
+                    try:
+                        p.unlink()
+                        deleted = True
+                    except OSError:
+                        logger.warning("删除记录文件失败 %s", p, exc_info=True)
+            if deleted:
+                self._remove_index_line(d, call_id)
+                # 目录空了顺手移除（index 由 available_dates 语义决定不删）
+                try:
+                    if dir_.exists() and not any(dir_.iterdir()):
+                        dir_.rmdir()
+                except OSError:
+                    pass
+                break
+        return deleted
+
+    def _count_calls(self, date: str) -> int:
+        """当日最终记录数（.json 且非 .partial.json）。"""
+        d = self.calls_dir / date
+        if not d.exists():
+            return 0
+        return sum(
+            1
+            for p in d.iterdir()
+            if p.is_file() and p.suffix == ".json" and not p.name.endswith(".partial.json")
+        )
+
+    def delete_date(self, date: str) -> int:
+        """删除某日期全部记录（calls 目录 + 索引文件）；返回删除的记录数。"""
+        if not _DATE_RE.fullmatch(date):
+            raise ValueError(f"非法日期目录名: {date!r}")
+        n = self._count_calls(date)
+        for target in (self.calls_dir / date, self.index_dir / f"{date}.jsonl"):
+            if not target.exists():
+                continue
+            try:
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+            except OSError:
+                logger.warning("删除 %s 失败", target, exc_info=True)
+        return n
+
+    def delete_all(self) -> dict:
+        """清空全部记录；返回 {dates, calls}。"""
+        dates = self.available_dates()
+        calls = 0
+        for d in dates:
+            calls += self._count_calls(d)
+            self.delete_date(d)
+        return {"dates": len(dates), "calls": calls}
+
+    def cleanup_older_than(self, retention_days: int) -> list[str]:
+        """保留策略：删除早于今天 N 天前的全部日期记录；返回被删日期。"""
+        if retention_days <= 0:
+            return []
+        cutoff = (datetime.now().astimezone() - timedelta(days=retention_days)).date()
+        removed: list[str] = []
+        for d in self.available_dates():
+            try:
+                day = date.fromisoformat(d)
+            except ValueError:
+                continue
+            if day < cutoff:
+                self.delete_date(d)
+                removed.append(d)
+        return removed
+
+    # ----------------------------------------------------------------- stats
+    def stats(self) -> dict:
+        """存储统计：每日期文件数与磁盘占用。"""
+        def _dir_size(p: Path) -> int:
+            total = 0
+            for f in p.rglob("*"):
+                if f.is_file():
+                    try:
+                        total += f.stat().st_size
+                    except OSError:
+                        pass
+            return total
+
+        per_date = []
+        total_bytes = 0
+        total_files = 0
+        for d in self.available_dates():
+            calls_dir = self.calls_dir / d
+            index_p = self.index_dir / f"{d}.jsonl"
+            size = (_dir_size(calls_dir) if calls_dir.exists() else 0) + (
+                index_p.stat().st_size if index_p.exists() else 0
+            )
+            files = sum(1 for f in calls_dir.iterdir() if f.is_file()) if calls_dir.exists() else 0
+            per_date.append(
+                {
+                    "date": d,
+                    "calls": self._count_calls(d),
+                    "files": files,
+                    "bytes": size,
+                }
+            )
+            total_bytes += size
+            total_files += files
+        return {"total_bytes": total_bytes, "total_files": total_files, "dates": per_date}
