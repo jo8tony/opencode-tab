@@ -331,6 +331,12 @@ async def proxy_endpoint(request: Request):
             record.error = ErrorInfo(type="client_aborted", message="客户端中途断开")
             _spawn("client_aborted")
             raise
+        except Exception as e:
+            # 上游中途断开/网络错误：已捕获多少定稿多少，绝不丢这条记录
+            t_end = time.perf_counter()
+            record.error = ErrorInfo(type="upstream_stream_error", message=str(e))
+            _spawn("error")
+            raise  # 重新抛出以保持透明：上游断了，客户端连接同样断
         finally:
             try:
                 await resp.aclose()

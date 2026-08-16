@@ -81,6 +81,20 @@ async def err(request: Request):
     )
 
 
+async def stream_broken(request: Request):
+    """SSE 流发到一半异常终止（模拟上游断连/网络错误）。"""
+    async def gen():
+        yield _sse({"id": "cmpl-broken", "model": "mock-model",
+                    "choices": [{"index": 0, "delta": {"role": "assistant"}}]})
+        await asyncio.sleep(0.02)
+        for piece in CONTENT_PIECES[:2]:  # 只发出部分内容
+            yield _sse({"id": "cmpl-broken", "model": "mock-model",
+                        "choices": [{"index": 0, "delta": {"content": piece}}]})
+            await asyncio.sleep(0.02)
+        raise RuntimeError("上游连接被重置")
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
 async def echo(request: Request):
     body = await request.body()
     return JSONResponse({
@@ -100,6 +114,7 @@ def make_mock_app(name: str) -> Starlette:
         Route("/v1/chat/completions", chat_completions, methods=["POST"]),
         Route("/v1/err", err, methods=["GET", "POST"]),
         Route("/v1/echo", echo, methods=["GET", "POST", "PUT"]),
+        Route("/v1/stream-broken", stream_broken, methods=["POST"]),
     ])
     app.state.server_name = name
     return app
@@ -776,3 +791,33 @@ async def test_trajectory_session_header_attribution(stack):
         assert detail["turns"][0]["new_messages"] == [{"role": "user", "content": "头归属第一条问题"}]
         assert detail["turns"][1]["new_messages"] == [{"role": "user", "content": "内容完全不同的第二条"}]
         assert detail["cumulative_usage"]["total_tokens"] == 19 * 2
+
+
+# ============================================== 13. 上游中途断流：部分数据照样记录
+async def test_upstream_broken_stream_records_partial(stack):
+    """上游 SSE 流中途断开：客户端连接同步断开，但已收内容全部定稿展示。"""
+    before = len(_index_rows(stack["records_dir"]))
+    received = b""
+    async with httpx.AsyncClient(timeout=30) as client:
+        async with client.stream(
+            "POST", f"{stack['proxy']}/v1/stream-broken",
+            json=_chat_payload(stream=True),
+        ) as resp:
+            assert resp.status_code == 200
+            try:
+                async for chunk in resp.aiter_bytes():
+                    received += chunk
+            except (httpx.ReadError, httpx.RemoteProtocolError):
+                pass  # 预期：上游断开透明传导到客户端
+    assert "你好" in received.decode("utf-8", errors="replace")  # 客户端确实收到部分流
+
+    rows = _wait_for_records(stack["records_dir"], before + 1)
+    rec = _load_rec(stack["records_dir"], rows[-1]["id"])
+    # 记录定稿：错误类型标记断流，已收分片组装进响应
+    assert rec["status"] == "error"
+    assert rec["error"]["type"] == "upstream_stream_error"
+    msg = rec["response"]["parsed"]["message"]
+    assert msg == {"role": "assistant", "content": "你好，"}  # 前 2 个分片
+    assert rec["response"]["chunk_count"] > 0
+    # partial 占位已被定稿清理
+    assert not _partial_path(stack["records_dir"], rec["id"]).exists()
