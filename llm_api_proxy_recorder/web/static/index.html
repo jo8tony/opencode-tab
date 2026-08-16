@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>LLM API 代理记录器</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-logo">⇄</span>
+    <span class="brand-name">LLM API 代理记录器</span>
+    <span class="brand-ver mono" id="meta-version"></span>
+  </div>
+  <nav class="nav" id="nav">
+    <a href="#/dashboard" data-nav="dashboard">仪表盘</a>
+    <a href="#/calls" data-nav="calls">调用列表</a>
+    <a href="#/trajectory" data-nav="trajectory">轨迹</a>
+    <a href="#/settings" data-nav="settings">设置</a>
+  </nav>
+</header>
+<main id="view" class="view">
+  <div class="loading">加载中…</div>
+</main>
+<div id="toast-box" class="toast-box"></div>
+<noscript><div class="banner banner-err">需要启用 JavaScript 才能使用本页面。</div></noscript>
+<script src="chart.js"></script>
+<script src="settings.js"></script>
+<script src="trajectory.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

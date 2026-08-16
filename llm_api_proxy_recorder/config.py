@@ -1,0 +1,127 @@
+"""配置系统：Pydantic v2 模型 + 默认配置工厂 + 加载/保存。"""
+
+import json
+import os
+import tempfile
+from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+CONFIG_PATH = os.path.expanduser("~/.llm-api-proxy-recorder/config.json")
+
+
+class ServerConfig(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 8117
+    admin_prefix: str = "/__recorder"
+
+    @field_validator("admin_prefix")
+    @classmethod
+    def _admin_prefix_must_start_with_slash(cls, v: str) -> str:
+        if not v.startswith("/"):
+            raise ValueError("admin_prefix 必须以 / 开头")
+        return v
+
+
+class UpstreamConfig(BaseModel):
+    name: str
+    base_url: str
+    api_key: str = ""
+    extra_headers: dict[str, str] = Field(default_factory=dict)
+    # 默认 keep：完全透明透传客户端凭据头；显式配置 replace 才注入上游 key
+    key_strategy: Literal["replace", "keep"] = "keep"
+
+    @field_validator("base_url")
+    @classmethod
+    def _base_url_scheme(cls, v: str) -> str:
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("base_url 必须以 http:// 或 https:// 开头")
+        return v
+
+
+class OutboundConfig(BaseModel):
+    proxy_url: str = ""
+
+    @field_validator("proxy_url")
+    @classmethod
+    def _proxy_url_scheme(cls, v: str) -> str:
+        if v and not v.startswith(("http://", "https://", "socks5://")):
+            raise ValueError("proxy_url 仅支持 http/https/socks5")
+        return v
+
+
+class RecordingConfig(BaseModel):
+    dir: str = "~/.llm-api-proxy-recorder/records"
+    redact: bool = True
+    redact_headers: list[str] = Field(
+        default_factory=lambda: ["authorization", "x-api-key", "api-key", "cookie"]
+    )
+    # 会话归属头（按优先级，大小写不敏感）：命中非空值即按头值聚合轨迹，
+    # 优先于内容哈希（模型+system+首条user）。留空列表 = 仅按内容聚合。
+    session_id_headers: list[str] = Field(
+        default_factory=lambda: ["x-deepseek-harness-session-id", "x-session-id"]
+    )
+    record_request_headers: bool = True
+    record_response_headers: bool = True
+    record_raw_chunks: bool = False
+    max_capture_mb: float = 20
+
+
+class AppConfig(BaseModel):
+    server: ServerConfig = Field(default_factory=ServerConfig)
+    upstreams: list[UpstreamConfig]
+    default_upstream: str
+    outbound: OutboundConfig = Field(default_factory=OutboundConfig)
+    recording: RecordingConfig = Field(default_factory=RecordingConfig)
+
+    @model_validator(mode="after")
+    def _check_upstreams(self) -> "AppConfig":
+        if not self.upstreams:
+            raise ValueError("upstreams 至少需要 1 个")
+        names = [u.name for u in self.upstreams]
+        if len(names) != len(set(names)):
+            raise ValueError("上游名称必须唯一")
+        if self.default_upstream not in names:
+            raise ValueError(f"default_upstream '{self.default_upstream}' 不在 upstreams 名称中")
+        return self
+
+
+def default_config() -> AppConfig:
+    """默认配置工厂。"""
+    return AppConfig(
+        upstreams=[UpstreamConfig(name="deepseek", base_url="https://api.deepseek.com")],
+        default_upstream="deepseek",
+    )
+
+
+def save_config(cfg: AppConfig, path: str = CONFIG_PATH) -> None:
+    """原子写：先写临时文件再 os.replace，避免半截文件。"""
+    p = Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    data = json.dumps(cfg.model_dump(), indent=2, ensure_ascii=False)
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".config-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(data)
+        os.replace(tmp, p)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def load_config(path: str = CONFIG_PATH) -> AppConfig:
+    """加载配置；文件不存在时生成默认配置并写盘后返回。"""
+    p = Path(path).expanduser()
+    if not p.exists():
+        cfg = default_config()
+        save_config(cfg, str(p))
+        return cfg
+    with open(p, "r", encoding="utf-8") as f:
+        return AppConfig.model_validate(json.load(f))
+
+
+def resolved_records_dir(cfg: AppConfig) -> Path:
+    """记录目录（展开 ~ 后的绝对路径）。"""
+    return Path(cfg.recording.dir).expanduser()

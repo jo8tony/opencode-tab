@@ -1,0 +1,76 @@
+"""应用工厂：RuntimeState + 管理 ping + 兜底透明代理路由。"""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
+
+from llm_api_proxy_recorder.admin.api import router as admin_router
+from llm_api_proxy_recorder.config import CONFIG_PATH, AppConfig, resolved_records_dir
+from llm_api_proxy_recorder.proxy.client import UpstreamClient
+from llm_api_proxy_recorder.proxy.handler import proxy_endpoint
+from llm_api_proxy_recorder.recording.store import CallStore
+
+PROXY_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+
+
+class RuntimeState:
+    """运行时共享状态：配置、上游客户端、落盘存储。"""
+
+    def __init__(self, config: AppConfig):
+        self.config = config
+        self.upstream_client = UpstreamClient(config.outbound.proxy_url)
+        self.store = CallStore(resolved_records_dir(config))
+
+    async def apply_config(self, new_cfg: AppConfig) -> None:
+        """热更新：换 config 引用；出站代理变化时重建客户端；记录目录变化时重建 store。"""
+        old_proxy = self.config.outbound.proxy_url
+        old_dir = resolved_records_dir(self.config)
+        self.config = new_cfg
+        if new_cfg.outbound.proxy_url != old_proxy:
+            await self.upstream_client.rebuild(new_cfg.outbound.proxy_url)
+        if resolved_records_dir(new_cfg) != old_dir:
+            self.store = CallStore(resolved_records_dir(new_cfg))
+
+    async def aclose(self) -> None:
+        await self.upstream_client.aclose()
+
+
+def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
+    runtime = RuntimeState(cfg)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        await runtime.aclose()
+
+    app = FastAPI(title="llm-api-proxy-recorder", lifespan=lifespan)
+    app.state.runtime = runtime
+    app.state.config = cfg  # 兼容旧引用
+    app.state.config_path = config_path or CONFIG_PATH
+
+    # 管理 API（必须先于兜底路由注册：Starlette 按注册顺序匹配）
+    @app.get(f"{cfg.server.admin_prefix}/api/ping")
+    def ping() -> dict:
+        return {"ok": True}
+
+    # 管理 API 路由集（ping 之后、兜底代理路由之前）
+    app.include_router(admin_router, prefix=f"{cfg.server.admin_prefix}/api")
+
+    # 静态 Web UI：admin 路由已注册在前，不会被吞掉 {admin_prefix}/api/*
+    static_dir = Path(__file__).parent / "web" / "static"
+    # 裸访问 {admin_prefix}（无尾斜杠）重定向到 UI 首页，避免落入兜底代理
+    @app.get(cfg.server.admin_prefix, include_in_schema=False)
+    def admin_root() -> RedirectResponse:
+        return RedirectResponse(url=f"{cfg.server.admin_prefix}/")
+
+    app.mount(f"{cfg.server.admin_prefix}", StaticFiles(directory=str(static_dir), html=True), name="ui")
+
+    # 兜底透明代理路由；/{path:path} 不匹配根路径 "/"，需单独注册
+    app.add_api_route("/", proxy_endpoint, methods=PROXY_METHODS)
+    app.add_api_route("/{path:path}", proxy_endpoint, methods=PROXY_METHODS)
+    return app

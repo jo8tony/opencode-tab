@@ -1,0 +1,26 @@
+# 虚拟环境与依赖
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+__pycache__/
+*.py[cod]
+*.egg
+
+# 测试缓存
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 运行时数据（配置文件、调用记录，可能包含敏感信息）
+.runtime/
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+
+# 日志
+*.log

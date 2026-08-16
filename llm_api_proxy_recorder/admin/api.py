@@ -1,0 +1,383 @@
+"""管理 API 实现：overview / calls / trajectory / settings / meta 等，挂载到 {admin_prefix}/api。"""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from datetime import datetime, timedelta
+
+import httpx
+from fastapi import APIRouter, Query, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+from llm_api_proxy_recorder import __version__
+from llm_api_proxy_recorder.config import AppConfig, resolved_records_dir, save_config
+from llm_api_proxy_recorder.recording.parse import diff_new_messages, message_digest
+
+logger = logging.getLogger("llm_api_proxy_recorder")
+
+router = APIRouter()
+
+# 需重启才能生效的字段（server 段持久化但不热应用）
+RESTART_FIELDS = ["server.host", "server.port", "server.admin_prefix"]
+
+
+# ------------------------------------------------------------------ 行级容错读取
+def _load_index_rows(store, dates: list[str]) -> list[tuple[str, dict]]:
+    """逐行读取多个日期的索引 JSONL，返回 (来源日期, 行)；坏行/坏文件跳过并 warning。"""
+    pairs: list[tuple[str, dict]] = []
+    for d in dates:
+        path = store.index_dir / f"{d}.jsonl"
+        try:
+            with open(path, encoding="utf-8") as f:
+                for lineno, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except Exception:
+                        logger.warning("索引 %s 第 %d 行 JSON 损坏，已跳过", path.name, lineno)
+                        continue
+                    if not isinstance(row, dict):
+                        logger.warning("索引 %s 第 %d 行非 JSON 对象，已跳过", path.name, lineno)
+                        continue
+                    pairs.append((d, row))
+        except FileNotFoundError:
+            continue
+        except Exception:
+            logger.warning("读取索引文件 %s 失败，已跳过", path, exc_info=True)
+    return pairs
+
+
+def _num(row: dict, key: str) -> float:
+    """缺字段/类型不符按 0 计。"""
+    v = row.get(key)
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return 0
+    return v
+
+
+def _sort_key(row: dict) -> str:
+    """按 started_at 字符串排序（ISO8601 可字典序比较，缺失排最后）。"""
+    return str(row.get("started_at") or "")
+
+
+# ---------------------------------------------------------------------- /overview
+@router.get("/overview")
+def overview(request: Request) -> dict:
+    store = request.app.state.runtime.store
+    pairs = _load_index_rows(store, store.available_dates())
+    rows = [r for _, r in pairs]
+
+    total = len(rows)
+    errors = sum(1 for r in rows if r.get("status") == "error")
+    durations = [
+        d
+        for d in (r.get("duration_ms") for r in rows)
+        if isinstance(d, (int, float)) and not isinstance(d, bool)
+    ]
+
+    by_model: dict[str, dict] = {}
+    for r in rows:
+        m = str(r.get("model") or "")
+        agg = by_model.setdefault(
+            m, {"model": m, "calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+        )
+        agg["calls"] += 1
+        agg["prompt_tokens"] += int(_num(r, "prompt_tokens"))
+        agg["completion_tokens"] += int(_num(r, "completion_tokens"))
+
+    # 近 14 天窗口（升序、空日期补零）；窗口外的行只计入总计
+    today = datetime.now().astimezone().date()
+    days = [(today - timedelta(days=i)).isoformat() for i in range(13, -1, -1)]
+    by_day = {
+        d: {"date": d, "calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "errors": 0}
+        for d in days
+    }
+    for d, r in pairs:
+        slot = by_day.get(d)
+        if slot is None:
+            continue
+        slot["calls"] += 1
+        slot["prompt_tokens"] += int(_num(r, "prompt_tokens"))
+        slot["completion_tokens"] += int(_num(r, "completion_tokens"))
+        if r.get("status") == "error":
+            slot["errors"] += 1
+
+    return {
+        "total_calls": total,
+        "total_prompt_tokens": int(sum(_num(r, "prompt_tokens") for r in rows)),
+        "total_completion_tokens": int(sum(_num(r, "completion_tokens") for r in rows)),
+        "avg_duration_ms": round(sum(durations) / len(durations), 1) if durations else None,
+        "error_rate": round(errors / total, 4) if total else 0.0,
+        "by_model": list(by_model.values()),
+        "by_day": list(by_day.values()),
+        "recent": sorted(rows, key=_sort_key, reverse=True)[:10],
+    }
+
+
+# ------------------------------------------------------------------------- /calls
+@router.get("/calls")
+def list_calls(
+    request: Request,
+    date: str = Query("all", pattern=r"^(all|\d{4}-\d{2}-\d{2})$"),
+    model: str | None = Query(None),
+    status: str | None = Query(None, pattern=r"^(ok|error|client_aborted)$"),
+    q: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+) -> dict:
+    store = request.app.state.runtime.store
+    dates = store.available_dates() if date == "all" else [date]
+    rows = [r for _, r in _load_index_rows(store, dates)]
+
+    if model is not None:
+        rows = [r for r in rows if r.get("model") == model]
+    if status is not None:
+        rows = [r for r in rows if r.get("status") == status]
+    if q:
+        needle = q.lower()
+        rows = [
+            r
+            for r in rows
+            if any(needle in str(r.get(k) or "").lower() for k in ("id", "path", "model"))
+        ]
+
+    rows.sort(key=_sort_key, reverse=True)
+    start = (page - 1) * page_size
+    return {
+        "items": rows[start : start + page_size],
+        "total": len(rows),
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/calls/{call_id}")
+def get_call(call_id: str, request: Request):
+    rec = request.app.state.runtime.store.load_call(call_id)
+    if rec is None:
+        return JSONResponse(status_code=404, content={"detail": "call not found"})
+    return rec
+
+
+# ------------------------------------------------------------------ /trajectory
+def _session_group_key(row: dict) -> str:
+    """无会话归属的旧记录/非对话调用：每条自成一组的 solo 键。"""
+    return str(row.get("session_key") or f"solo:{row.get('id')}")
+
+
+@router.get("/trajectory/sessions")
+def trajectory_sessions(
+    request: Request,
+    date: str = Query("all", pattern=r"^(all|\d{4}-\d{2}-\d{2})$"),
+    q: str | None = Query(None),
+) -> dict:
+    """会话列表：按 session_key 聚合 index 行。"""
+    store = request.app.state.runtime.store
+    dates = store.available_dates() if date == "all" else [date]
+    rows = [r for _, r in _load_index_rows(store, dates)]
+
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(_session_group_key(r), []).append(r)
+
+    sessions = []
+    for key, grp in groups.items():
+        grp.sort(key=_sort_key)
+        first, last = grp[0], grp[-1]
+        preview = next((str(r.get("preview")) for r in grp if r.get("preview")), "")
+        if not preview:
+            preview = str(first.get("path") or first.get("id") or "")
+        sessions.append(
+            {
+                "session_key": key,
+                "solo": key.startswith("solo:"),
+                "model": last.get("model"),
+                "calls": len(grp),
+                "prompt_tokens": sum(int(_num(r, "prompt_tokens")) for r in grp),
+                "completion_tokens": sum(int(_num(r, "completion_tokens")) for r in grp),
+                "total_tokens": sum(int(_num(r, "total_tokens")) for r in grp),
+                "first_started_at": first.get("started_at"),
+                "last_started_at": last.get("started_at"),
+                "last_status": last.get("status"),
+                "preview": preview[:80],
+            }
+        )
+
+    if q:
+        needle = q.lower()
+        sessions = [
+            s
+            for s in sessions
+            if needle in s["preview"].lower()
+            or needle in str(s.get("model") or "").lower()
+            or needle in s["session_key"].lower()
+        ]
+    sessions.sort(key=lambda s: str(s.get("last_started_at") or ""), reverse=True)
+    return {"sessions": sessions, "total": len(sessions)}
+
+
+def _turn_search_text(turn: dict) -> str:
+    parts: list[str] = [
+        json.dumps(turn.get("new_messages") or [], ensure_ascii=False),
+        json.dumps(turn.get("response_message") or {}, ensure_ascii=False),
+        str(turn.get("model") or ""),
+    ]
+    return " ".join(parts).lower()
+
+
+@router.get("/trajectory/sessions/{key}")
+def trajectory_session_detail(key: str, request: Request, q: str | None = Query(None)) -> dict:
+    """会话轨迹：调用序列 → Turn 账本（增量消息 + 响应 + 指标 + 累计用量）。"""
+    store = request.app.state.runtime.store
+    rows = [r for _, r in _load_index_rows(store, store.available_dates())]
+    if key.startswith("solo:"):
+        rows = [r for r in rows if f"solo:{r.get('id')}" == key]
+    else:
+        rows = [r for r in rows if r.get("session_key") == key]
+    rows.sort(key=_sort_key)
+
+    turns: list[dict] = []
+    prev_digests: list[str] | None = None
+    cum = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    for row in rows:
+        rec = store.load_call(str(row.get("id")))
+        if rec is None:
+            continue
+        req = rec.get("request") or {}
+        parsed_req = req.get("parsed") or {}
+        messages = parsed_req.get("messages")
+        new_msgs = diff_new_messages(prev_digests, messages)
+        if isinstance(messages, list):
+            prev_digests = [message_digest(m) for m in messages]
+
+        resp = rec.get("response") or {}
+        parsed_resp = resp.get("parsed") or {}
+        usage = rec.get("usage") or {}
+        for k in cum:
+            v = usage.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                cum[k] += int(v)
+
+        turns.append(
+            {
+                "turn_no": len(turns) + 1,
+                "call_id": rec.get("id"),
+                "started_at": rec.get("started_at"),
+                "status": rec.get("status"),
+                "status_code": resp.get("status_code"),
+                "model": rec.get("model"),
+                "stream": rec.get("stream"),
+                "duration_ms": rec.get("duration_ms"),
+                "ttft_ms": resp.get("ttft_ms"),
+                "decode_ms": resp.get("decode_ms"),
+                "first_byte_ms": resp.get("first_byte_ms"),
+                "tokens_per_sec": resp.get("decode_tokens_per_sec"),
+                "new_messages": new_msgs,
+                "response_message": parsed_resp.get("message"),
+                "finish_reason": parsed_resp.get("finish_reason"),
+                "parse_error": parsed_resp.get("parse_error"),
+                "usage": usage or None,
+                "cumulative_usage": dict(cum),
+                "tools": parsed_req.get("tools"),
+                "params": parsed_req.get("params"),
+                "error": rec.get("error"),
+            }
+        )
+
+    if q:
+        needle = q.lower()
+        turns = [t for t in turns if needle in _turn_search_text(t)]
+
+    first = rows[0].get("started_at") if rows else None
+    last = rows[-1].get("started_at") if rows else None
+    return {
+        "session_key": key,
+        "model": rows[-1].get("model") if rows else None,
+        "calls": len(turns),
+        "first_started_at": first,
+        "last_started_at": last,
+        "preview": next((str(r.get("preview")) for r in rows if r.get("preview")), ""),
+        "cumulative_usage": dict(cum),
+        "turns": turns,
+    }
+
+
+# ---------------------------------------------------------------------- /settings
+@router.get("/settings")
+def get_settings(request: Request) -> dict:
+    cfg: AppConfig = request.app.state.runtime.config
+    return {
+        "config": cfg.model_dump(),
+        "config_path": request.app.state.config_path,
+        "records_dir": str(resolved_records_dir(cfg)),
+        "restart_fields": RESTART_FIELDS,
+    }
+
+
+@router.put("/settings")
+async def put_settings(new_cfg: AppConfig, request: Request) -> dict:
+    runtime = request.app.state.runtime
+    save_config(new_cfg, request.app.state.config_path)
+    # server 段不同则需重启（已持久化但不热应用）
+    restart_required = new_cfg.server != runtime.config.server
+    await runtime.apply_config(new_cfg)
+    request.app.state.config = new_cfg  # 兼容旧引用
+    return {"ok": True, "restart_required": restart_required}
+
+
+class TestUpstreamBody(BaseModel):
+    name: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+
+
+@router.post("/settings/test-upstream")
+async def test_upstream(body: TestUpstreamBody, request: Request) -> dict:
+    cfg: AppConfig = request.app.state.runtime.config
+    base_url = body.base_url
+    api_key = body.api_key
+    if body.name is not None:
+        up = next((u for u in cfg.upstreams if u.name == body.name), None)
+        if up is None:
+            return JSONResponse(status_code=400, content={"detail": f"upstream '{body.name}' 不存在"})
+        base_url = base_url or up.base_url
+        if api_key is None:
+            api_key = up.api_key
+    if not base_url:
+        return JSONResponse(status_code=400, content={"detail": "缺少 name 或 base_url"})
+
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    url = base_url.rstrip("/") + "/models"
+    t0 = time.perf_counter()
+    status_code = None
+    error = None
+    try:
+        # 独立直连客户端：不受出站代理配置影响
+        async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
+            resp = await client.get(url, headers=headers)
+        status_code = resp.status_code
+    except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+    return {
+        "ok": error is None,
+        "status_code": status_code,
+        "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
+        "error": error,
+    }
+
+
+# ------------------------------------------------------------------------- /meta
+@router.get("/meta")
+def meta(request: Request) -> dict:
+    cfg: AppConfig = request.app.state.runtime.config
+    return {
+        "version": __version__,
+        "admin_prefix": cfg.server.admin_prefix,
+        "config_path": request.app.state.config_path,
+        "records_dir": str(resolved_records_dir(cfg)),
+    }
