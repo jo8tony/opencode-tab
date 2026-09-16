@@ -619,7 +619,7 @@ details.raw-chunks summary:hover { text-decoration: underline; }
 .term-area .term-empty-wrap { background: var(--panel); height: 100%; display: flex; align-items: center; justify-content: center; }
 .term-box { position: absolute; inset: 0; display: none; padding: 4px 6px; }
 .term-box.active { display: block; }
-.term-box .xterm { height: 100%; padding: 4px 2px; line-height: normal; letter-spacing: normal; }
+.term-box .xterm { height: 100%; padding: 4px 2px; line-height: normal; letter-spacing: normal; text-spacing-trim: space-all; }
 .term-overlay {
   position: absolute; inset: 0; z-index: 5; background: rgba(24, 29, 39, .78);
   display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px);
