@@ -1,13 +1,22 @@
 "use strict";
 /* 终端页：浏览器中管理多个 opencode / shell 会话（xterm.js + WebSocket）。
- * 页面状态 TERM 在路由离开时整体清理（addCleanup）。
- * 每个会话一个 xterm 实例，tab 切换用 display 隐藏保活（保滚动历史）。 */
+ * 路由离开时保留终端实例，避免重放 ANSI 输出破坏交互式程序的画面。 */
 
 let TERM = null;
+let terminalLoadId = 0;
 
 /* ============================================================ 页面渲染 */
 function renderTerminal(view) {
+  if (TERM) {
+    TERM.page.classList.remove("hidden");
+    view.replaceChildren(TERM.page);
+    addCleanup(parkTerminal);
+    if (TERM.activeId) activate(TERM.activeId);
+    refreshTerminalInfo();
+    return;
+  }
   view.replaceChildren(el("div", { class: "loading", text: "加载中…" }));
+  const loadId = ++terminalLoadId;
   (async () => {
     let meta, check, sessions, projects;
     try {
@@ -18,19 +27,28 @@ function renderTerminal(view) {
         api("terminal/projects"),
       ]);
     } catch (e) {
+      if (loadId !== terminalLoadId || location.hash !== "#/terminal") return;
       view.replaceChildren(errorCard("加载终端失败：" + (e.detail ? format422(e.detail) : e.message), () => route()));
       return;
     }
+    if (loadId !== terminalLoadId || location.hash !== "#/terminal" || !view.isConnected) return;
 
     TERM = {
       adminPrefix: meta.admin_prefix || "/__recorder",
       check,
+      newBtn: null,
+      hint: null,
       byId: new Map(),
       projects: projects.items || [],
+      projectsRequestId: 0,
       activeId: null,
       sideList: null,
       projectList: null,
       tabs: null,
+      tabList: null,
+      fullscreenBtn: null,
+      main: null,
+      page: null,
       area: null,
       empty: null,
       ro: null,
@@ -42,27 +60,37 @@ function renderTerminal(view) {
       class: "term-hint " + (check.opencode_found ? "ok" : "warn"),
       text: !check.pty_available ? "当前系统缺少终端依赖" : check.opencode_found ? "opencode 已就绪" : "未检测到 opencode，可先使用 shell 会话",
     });
+    TERM.newBtn = newBtn;
+    TERM.hint = hint;
 
     TERM.sideList = el("div", { class: "term-list" });
     TERM.projectList = el("div", { class: "term-project-list" });
     TERM.tabs = el("div", { class: "term-tabs" });
+    TERM.tabList = el("div", { class: "term-tab-list" });
+    TERM.fullscreenBtn = el("button", {
+      class: "term-fullscreen", type: "button", title: "全屏显示终端",
+      "aria-label": "全屏显示终端", text: "⛶", onclick: toggleTerminalFullscreen,
+    });
+    TERM.tabs.append(TERM.tabList, TERM.fullscreenBtn);
     TERM.area = el("div", { class: "term-area" });
+    TERM.main = el("div", { class: "term-main" }, TERM.tabs, TERM.area);
     TERM.empty = el("div", { class: "term-empty-wrap" },
       emptyBox("暂无终端会话", "点击「新建会话」选择项目目录，在浏览器中启动 opencode"));
 
-    view.replaceChildren(
-      el("section", { class: "term-page" },
-        el("aside", { class: "term-side" },
-          el("div", { class: "term-side-head" }, newBtn, hint),
-          el("div", { class: "term-side-section", text: "运行中的会话" }),
-          TERM.sideList,
-          el("div", { class: "term-side-section", text: "已保存的项目" }),
-          TERM.projectList),
-        el("div", { class: "term-main" }, TERM.tabs, TERM.area)));
+    TERM.page = el("section", { class: "term-page" },
+      el("aside", { class: "term-side" },
+        el("div", { class: "term-side-head" }, newBtn, hint),
+        el("div", { class: "term-side-section", text: "运行中的会话" }),
+        TERM.sideList,
+        el("div", { class: "term-side-section", text: "已保存的项目" }),
+        TERM.projectList),
+      TERM.main);
+    view.replaceChildren(TERM.page);
 
     // 已有会话逐个挂接（服务重启前残留的会话仍在运行）
     for (const info of sessions.items || []) addSession(info, { focus: false });
     refreshAll();
+    refreshProjectList();
     if (TERM.byId.size) activate(TERM.byId.keys().next().value);
 
     // 尺寸自适应：容器变化 + 窗口变化
@@ -70,22 +98,62 @@ function renderTerminal(view) {
     TERM.ro.observe(TERM.area);
     const onWinResize = () => fitActive();
     window.addEventListener("resize", onWinResize);
-    addCleanup(() => {
-      window.removeEventListener("resize", onWinResize);
-      if (TERM && TERM.ro) TERM.ro.disconnect();
-      for (const s of TERM.byId.values()) {
-        if (s.reconnectTimer) clearTimeout(s.reconnectTimer);
-        closeWs(s);
-        try { s.term.dispose(); } catch (_) { /* 已销毁 */ }
-      }
-      TERM = null;
+    document.addEventListener("fullscreenchange", () => {
+      if (!TERM) return;
+      const full = document.fullscreenElement === TERM.main;
+      TERM.fullscreenBtn.textContent = full ? "↙" : "⛶";
+      TERM.fullscreenBtn.title = full ? "退出全屏" : "全屏显示终端";
+      TERM.fullscreenBtn.setAttribute("aria-label", TERM.fullscreenBtn.title);
+      requestAnimationFrame(fitActive);
     });
+    document.addEventListener("click", (ev) => {
+      if (!ev.target.closest(".term-project-more, .term-project-menu")) closeProjectMenus();
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") closeProjectMenus();
+    });
+    addCleanup(parkTerminal);
   })();
+}
+
+function parkTerminal() {
+  if (!TERM || !TERM.page) return;
+  TERM.page.classList.add("hidden");
+  document.body.append(TERM.page);
+}
+
+async function refreshTerminalInfo() {
+  const projectsRequestId = ++TERM.projectsRequestId;
+  try {
+    const [check, projects] = await Promise.all([
+      api("terminal/check", { silent: true }),
+      api("terminal/projects", { silent: true }),
+    ]);
+    if (!TERM) return;
+    TERM.check = check;
+    TERM.newBtn.disabled = !check.pty_available || !check.enabled;
+    TERM.hint.className = "term-hint " + (check.opencode_found ? "ok" : "warn");
+    TERM.hint.textContent = !check.pty_available ? "当前系统缺少终端依赖" : check.opencode_found ? "opencode 已就绪" : "未检测到 opencode，可先使用 shell 会话";
+    if (TERM.projectsRequestId === projectsRequestId) {
+      TERM.projects = projects.items || [];
+      refreshProjectList();
+    }
+  } catch (_) { /* 保留当前信息，下一次进入页面再试 */ }
+}
+
+async function toggleTerminalFullscreen() {
+  if (!TERM) return;
+  try {
+    if (document.fullscreenElement === TERM.main) await document.exitFullscreen();
+    else await TERM.main.requestFullscreen();
+  } catch (e) {
+    toast("切换全屏失败：" + e.message, "error");
+  }
 }
 
 /* ============================================================ 会话管理 */
 function addSession(info, { focus }) {
-  const s = Object.assign({}, info, { ws: null, wsState: "closed", reconnectTimer: null, attempts: 0 });
+  const s = Object.assign({}, info, { ws: null, wsState: "closed", reconnectTimer: null, attempts: 0, hasConnected: false });
 
   s.overlayEl = el("div", { class: "term-overlay hidden" });
   s.boxEl = el("div", { class: "term-box" }, s.overlayEl);
@@ -110,12 +178,10 @@ function addSession(info, { focus }) {
   });
   s.fit = new FitAddon.FitAddon();
   s.term.loadAddon(s.fit);
-  s.term.open(s.boxEl);
-  s.term.onData((d) => sendInput(s, d));
-
   TERM.byId.set(s.id, s);
   TERM.area.append(s.boxEl);
-  connect(s);
+  s.term.open(s.boxEl);
+  s.term.onData((d) => sendInput(s, d));
   if (focus) activate(s.id);
 }
 
@@ -157,6 +223,7 @@ function wsUrl(id) {
 
 function connect(s) {
   closeWs(s);
+  s.hasConnected = true;
   const ws = new WebSocket(wsUrl(s.id));
   ws.binaryType = "arraybuffer";
   s.ws = ws;
@@ -235,12 +302,15 @@ function activate(id) {
   for (const [sid, x] of TERM.byId) x.boxEl.classList.toggle("active", sid === id);
   refreshAll();
   requestAnimationFrame(() => {
+    if (!TERM || TERM.activeId !== s.id || !TERM.byId.has(s.id) || TERM.page.classList.contains("hidden")) return;
     fitActive();
+    if (!s.ws && !s.reconnectTimer && (!s.hasConnected || s.alive)) connect(s);
     try { s.term.focus(); } catch (_) { /* 已销毁 */ }
   });
 }
 
 function fitActive() {
+  if (!TERM || !TERM.page || TERM.page.classList.contains("hidden")) return;
   const s = TERM.byId.get(TERM.activeId);
   if (!s) return;
   try {
@@ -250,8 +320,8 @@ function fitActive() {
 }
 
 function statusDot(s) {
-  const cls = s.alive ? (s.wsState === "open" ? "run" : s.wsState === "connecting" ? "conn" : "lost") : "dead";
-  const title = { run: "运行中", conn: "连接中", lost: "连接断开，自动重连中", dead: "已退出" }[cls];
+  const cls = s.alive ? (!s.hasConnected ? "conn" : s.wsState === "open" ? "run" : s.wsState === "connecting" ? "conn" : "lost") : "dead";
+  const title = !s.hasConnected && s.alive ? "切换到此会话时连接" : { run: "运行中", conn: "连接中", lost: "连接断开，自动重连中", dead: "已退出" }[cls];
   return el("span", { class: "term-dot " + cls, title });
 }
 
@@ -259,14 +329,13 @@ function refreshAll() {
   if (!TERM) return;
   refreshTabs();
   refreshSideList();
-  refreshProjectList();
   refreshEmpty();
 }
 
 function refreshTabs() {
-  TERM.tabs.replaceChildren();
+  TERM.tabList.replaceChildren();
   for (const s of TERM.byId.values()) {
-    TERM.tabs.append(el("button", {
+    TERM.tabList.append(el("button", {
       class: "term-tab" + (s.id === TERM.activeId ? " active" : ""),
       type: "button",
       title: s.cwd + "（" + (s.kind === "shell" ? "shell" : "opencode") + "）",
@@ -302,30 +371,82 @@ function refreshProjectList() {
     return;
   }
   for (const project of TERM.projects) {
+    const menu = el("div", { class: "term-project-menu hidden" },
+      el("button", { class: "term-project-remove", type: "button", text: "从列表移除", onclick: () => openRemoveProjectDialog(project) }));
+    const more = el("button", {
+      class: "term-project-more", type: "button", title: "更多操作", "aria-label": `更多操作：${project.name}`,
+      "aria-expanded": "false", text: "⋯",
+      onclick: (ev) => {
+        ev.stopPropagation();
+        const opening = menu.classList.contains("hidden");
+        closeProjectMenus();
+        menu.classList.toggle("hidden", !opening);
+        more.setAttribute("aria-expanded", String(opening));
+      },
+    });
     TERM.projectList.append(el("div", { class: "term-project-item", title: project.path },
-      el("button", { class: "term-project-open", type: "button", onclick: () => openCreateModal(project) },
-        el("span", { class: "term-side-title", text: project.name }),
-        el("span", { class: "term-side-path mono", text: project.path })),
-      el("button", { class: "term-project-delete", type: "button", title: "从项目列表移除", text: "×", onclick: () => removeProject(project) })));
+      el("div", { class: "term-project-row" },
+        el("button", { class: "term-project-open", type: "button", onclick: () => { closeProjectMenus(); openCreateModal(project); } },
+          el("span", { class: "term-side-title", text: project.name }),
+          el("span", { class: "term-side-path mono", text: project.path })),
+        more),
+      menu));
   }
 }
 
+function closeProjectMenus() {
+  if (!TERM) return;
+  TERM.projectList.querySelectorAll(".term-project-menu").forEach((menu) => menu.classList.add("hidden"));
+  TERM.projectList.querySelectorAll(".term-project-more").forEach((button) => button.setAttribute("aria-expanded", "false"));
+}
+
 async function reloadProjects() {
+  const projectsRequestId = ++TERM.projectsRequestId;
   try {
     const result = await api("terminal/projects", { silent: true });
-    if (TERM) { TERM.projects = result.items || []; refreshProjectList(); }
+    if (TERM && TERM.projectsRequestId === projectsRequestId) {
+      TERM.projects = result.items || [];
+      refreshProjectList();
+    }
   } catch (e) {
     toast("读取项目列表失败：" + (e.detail || e.message), "error");
   }
 }
 
 async function removeProject(project) {
-  try {
-    await api("terminal/projects", { method: "DELETE", body: { path: project.path }, silent: true });
-    await reloadProjects();
-  } catch (e) {
-    toast("移除项目失败：" + (e.detail || e.message), "error");
-  }
+  await api("terminal/projects", { method: "DELETE", body: { path: project.path }, silent: true });
+  TERM.projectsRequestId++;
+  TERM.projects = TERM.projects.filter((item) => item.path !== project.path);
+  refreshProjectList();
+}
+
+function openRemoveProjectDialog(project) {
+  closeProjectMenus();
+  const errorLine = el("div", { class: "term-modal-err" });
+  const cancel = () => mask.remove();
+  const removeBtn = el("button", { class: "btn btn-danger", type: "button", text: "确认移除", onclick: async () => {
+    removeBtn.disabled = true;
+    errorLine.textContent = "";
+    try {
+      await removeProject(project);
+      mask.remove();
+      toast("项目已从列表移除", "");
+    } catch (e) {
+      errorLine.textContent = "移除失败：" + (e.detail || e.message);
+      removeBtn.disabled = false;
+    }
+  } });
+  const mask = el("div", { class: "modal-mask", onclick: (ev) => { if (ev.target === mask) cancel(); } },
+    el("div", { class: "modal term-confirm-modal", role: "dialog", "aria-modal": "true", "aria-label": "确认移除项目" },
+      el("div", { class: "modal-title" }, el("b", { text: "移除已保存的项目？" })),
+      el("p", { text: `确认从列表移除「${project.name}」？项目文件和运行中的会话不会被删除。` }),
+      el("div", { class: "term-confirm-path mono", text: project.path }),
+      errorLine,
+      el("div", { class: "modal-actions" },
+        el("button", { class: "btn", type: "button", text: "取消", onclick: cancel }),
+        removeBtn)));
+  document.body.append(mask);
+  removeBtn.focus();
 }
 
 function refreshEmpty() {
