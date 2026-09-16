@@ -17,6 +17,7 @@ from llm_api_proxy_recorder.proxy.client import UpstreamClient
 from llm_api_proxy_recorder.proxy.handler import proxy_endpoint
 from llm_api_proxy_recorder.recording.store import CallStore
 from llm_api_proxy_recorder.terminal import TerminalManager
+from llm_api_proxy_recorder.terminal.projects import TerminalProjectStore
 from llm_api_proxy_recorder.terminal.routes import router as terminal_router
 
 logger = logging.getLogger("llm_api_proxy_recorder")
@@ -56,11 +57,12 @@ class NoCacheStaticFiles(StaticFiles):
 class RuntimeState:
     """运行时共享状态：配置、上游客户端、落盘存储。"""
 
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, config_path: str):
         self.config = config
         self.upstream_client = UpstreamClient(config.outbound.proxy_url)
         self.store = CallStore(resolved_records_dir(config))
         self.terminal = TerminalManager()
+        self.terminal_projects = TerminalProjectStore(config_path)
 
     async def apply_config(self, new_cfg: AppConfig) -> None:
         """热更新：换 config 引用；出站代理变化时重建客户端；记录目录变化时重建 store。"""
@@ -77,7 +79,7 @@ class RuntimeState:
 
 
 def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
-    runtime = RuntimeState(cfg)
+    runtime = RuntimeState(cfg, config_path or CONFIG_PATH)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

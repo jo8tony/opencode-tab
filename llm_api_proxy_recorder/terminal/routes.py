@@ -1,4 +1,4 @@
-"""终端 API：会话 CRUD / 目录浏览 / 命令探测 / WebSocket 终端流。
+"""终端 API：会话、项目目录、文件浏览与 WebSocket 终端流。
 
 挂载到 {admin_prefix}/api/terminal/*（app.py 中先于兜底代理路由注册）。
 """
@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 
 from fastapi import APIRouter, Query, Request, WebSocket, WebSocketDisconnect
@@ -17,6 +18,7 @@ from typing import Literal
 
 from llm_api_proxy_recorder.config import AppConfig
 from llm_api_proxy_recorder.terminal.manager import (
+    PtyProcess,
     TerminalError,
     detect_shell,
     resolve_executable,
@@ -60,7 +62,38 @@ async def create_session(body: CreateSessionBody, request: Request):
         )
     except TerminalError as e:
         return _err(e)
-    return session.info()
+    info = session.info()
+    try:
+        request.app.state.runtime.terminal_projects.add(session.cwd, session.kind)
+        info["project_saved"] = True
+    except Exception:
+        logger.warning("保存终端项目失败：%s", session.cwd, exc_info=True)
+        info["project_saved"] = False
+    return info
+
+
+@router.get("/terminal/projects")
+def list_projects(request: Request) -> dict:
+    try:
+        items = request.app.state.runtime.terminal_projects.list()
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        return JSONResponse(status_code=500, content={"detail": f"读取项目列表失败：{e}"})
+    return {"items": items, "total": len(items)}
+
+
+class DeleteProjectBody(BaseModel):
+    path: str
+
+
+@router.delete("/terminal/projects")
+def delete_project(body: DeleteProjectBody, request: Request):
+    try:
+        deleted = request.app.state.runtime.terminal_projects.delete(body.path)
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        return JSONResponse(status_code=500, content={"detail": f"删除项目失败：{e}"})
+    if not deleted:
+        return JSONResponse(status_code=404, content={"detail": "project not found"})
+    return {"ok": True}
 
 
 @router.delete("/terminal/sessions/{session_id}")
@@ -126,6 +159,8 @@ def terminal_check(request: Request) -> dict:
         "shell_command": shell_cmd,
         "shell_found": bool(shell_path),
         "enabled": t.enabled,
+        "platform": sys.platform,
+        "pty_available": PtyProcess is not None,
     }
 
 
@@ -139,12 +174,7 @@ async def terminal_ws(websocket: WebSocket, session_id: str):
         return
 
     await websocket.accept()
-    replay = await manager.attach(websocket, session)
-    await websocket.send_text(
-        json.dumps({"type": "attached", "alive": session.alive, "kind": session.kind})
-    )
-    if replay:
-        await websocket.send_bytes(replay)
+    await manager.attach(websocket, session)
 
     try:
         while True:

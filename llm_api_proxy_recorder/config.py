@@ -88,6 +88,8 @@ class TerminalConfig(BaseModel):
     route_through_proxy: bool = True
     # 走哪个命名上游；空 = 默认上游
     proxy_upstream: str = ""
+    # OpenCode provider ID；空值时使用所选上游名称。
+    opencode_provider: str = ""
     # 注入进程的额外环境变量（优先级最高，可覆盖代理注入）
     inject_env: dict[str, str] = Field(default_factory=dict)
 

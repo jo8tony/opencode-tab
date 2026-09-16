@@ -1,4 +1,4 @@
-"""终端会话管理：pywinpty(ConPTY) 托管 opencode / shell 进程。
+"""终端会话管理：Windows ConPTY / macOS PTY 托管 opencode / shell。
 
 设计要点：
 - 每个会话一个输出泵任务：阻塞 read 放线程池，读到数据后广播给所有已连接
@@ -11,9 +11,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -25,10 +27,15 @@ from llm_api_proxy_recorder.config import AppConfig
 
 logger = logging.getLogger("llm_api_proxy_recorder")
 
-try:
-    from winpty import PtyProcess  # type: ignore[import-not-found]
-except ImportError:  # 非 Windows 平台：模块不可用，create 时报错
-    PtyProcess = None  # type: ignore[assignment]
+if sys.platform == "win32":
+    try:
+        from winpty import PtyProcess  # type: ignore[import-not-found]
+    except ImportError:
+        PtyProcess = None
+elif sys.platform == "darwin":
+    from llm_api_proxy_recorder.terminal.posix_pty import PosixPtyProcess as PtyProcess
+else:
+    PtyProcess = None
 
 # 会话占位 API key：仅上游 key_strategy=replace 时注入（代理侧会替换真实 key）
 PLACEHOLDER_KEY = "proxy-managed"
@@ -58,6 +65,7 @@ class TerminalSession:
     buffer: list[bytes] = field(default_factory=list)
     buf_size: int = 0
     pump_task: asyncio.Task | None = None
+    output_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def append_buffer(self, raw: bytes) -> None:
         if self.max_buffer <= 0:
@@ -82,7 +90,12 @@ class TerminalSession:
 
 # ------------------------------------------------------------------ 命令解析
 def detect_shell() -> str:
-    """通用 shell：pwsh 优先，回退 powershell。"""
+    """按当前系统选择通用 shell。"""
+    if sys.platform == "darwin":
+        preferred = os.environ.get("SHELL", "")
+        if preferred and Path(preferred).is_file():
+            return preferred
+        return "/bin/zsh"
     for name in ("pwsh.exe", "powershell.exe"):
         if shutil.which(name):
             return name
@@ -108,7 +121,7 @@ def _build_argv(exe: str, args: list[str]) -> list[str]:
 
 
 def _build_env(cfg: AppConfig, kind: str) -> dict[str, str]:
-    """进程环境：基础 TERM + （opencode 且开启联动时）代理地址注入 + 用户 inject_env。"""
+    """进程环境：终端变量、OpenCode 临时 provider 配置、用户覆盖。"""
     env = dict(os.environ)
     env["TERM"] = "xterm-256color"
     env["COLORTERM"] = "truecolor"
@@ -122,6 +135,29 @@ def _build_env(cfg: AppConfig, kind: str) -> dict[str, str]:
             upstream_name = cfg.default_upstream
         env["OPENAI_BASE_URL"] = base
         env["ANTHROPIC_BASE_URL"] = base
+        provider = t.opencode_provider.strip() or upstream_name
+        # OpenCode 的 provider 配置比通用环境变量更可靠；仅影响该终端进程，
+        # 不修改用户或项目目录下的 opencode.json。
+        try:
+            inline = json.loads(env.get("OPENCODE_CONFIG_CONTENT") or "{}")
+            if not isinstance(inline, dict):
+                inline = {}
+        except ValueError:
+            inline = {}
+        providers = inline.setdefault("provider", {})
+        if not isinstance(providers, dict):
+            providers = {}
+            inline["provider"] = providers
+        entry = providers.setdefault(provider, {})
+        if not isinstance(entry, dict):
+            entry = {}
+            providers[provider] = entry
+        options = entry.setdefault("options", {})
+        if not isinstance(options, dict):
+            options = {}
+            entry["options"] = options
+        options["baseURL"] = base
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(inline, ensure_ascii=False)
         up = next((u for u in cfg.upstreams if u.name == upstream_name), None)
         if up is not None and up.key_strategy == "replace":
             # 代理侧会注入真实 key，这里给占位值让 opencode 的 provider 校验通过
@@ -144,7 +180,7 @@ class TerminalManager:
         if not t.enabled:
             raise TerminalError("终端模块未启用（settings 中 terminal.enabled）")
         if PtyProcess is None:
-            raise TerminalError("当前平台缺少 pywinpty，无法创建终端会话", 500)
+            raise TerminalError("当前平台缺少终端 PTY 依赖或尚不支持", 500)
         if len(self.sessions) >= t.max_sessions:
             raise TerminalError(f"已达会话上限（max_sessions={t.max_sessions}）")
 
@@ -169,9 +205,13 @@ class TerminalManager:
 
         sid = uuid.uuid4().hex[:12]
         try:
-            proc = await asyncio.to_thread(
-                PtyProcess.spawn, argv, str(path), env, (rows, cols)
-            )
+            if sys.platform == "darwin":
+                # 直接在事件循环线程 forkpty，避免在线程池工作线程中死锁。
+                proc = PtyProcess.spawn(argv, cwd=str(path), env=env, dimensions=(rows, cols))
+            else:
+                proc = await asyncio.to_thread(
+                    PtyProcess.spawn, argv, cwd=str(path), env=env, dimensions=(rows, cols)
+                )
         except FileNotFoundError as e:
             raise TerminalError(f"未找到命令 {command}：{e}") from e
         except Exception as e:
@@ -217,9 +257,19 @@ class TerminalManager:
             await asyncio.gather(*(self.kill(sid) for sid in ids))
 
     # ------------------------------------------------------------ 客户端交互
-    async def attach(self, websocket: WebSocket, session: TerminalSession) -> bytes:
-        session.clients.add(websocket)
-        return b"".join(session.buffer)  # 回放缓冲
+    async def attach(self, websocket: WebSocket, session: TerminalSession) -> None:
+        """先发送回放，再订阅实时输出，避免附加时同一分块收到两次。"""
+        async with session.output_lock:
+            await websocket.send_text(json.dumps(
+                {"type": "attached", "alive": session.alive, "kind": session.kind}
+            ))
+            replay = b"".join(session.buffer)
+            if replay:
+                await websocket.send_bytes(replay)
+            if session.alive:
+                session.clients.add(websocket)
+            else:
+                await websocket.send_text(json.dumps({"type": "exit", "code": session.exit_code}))
 
     def detach(self, websocket: WebSocket, session: TerminalSession) -> None:
         session.clients.discard(websocket)
@@ -242,16 +292,17 @@ class TerminalManager:
         try:
             while True:
                 try:
-                    # pywinpty read() 阻塞直至有数据；返回 UTF-8 str，EOF 抛 EOFError
+                    # Windows 返回 str，macOS 返回 bytes；EOF 抛异常。
                     data = await asyncio.to_thread(proc.read, 65536)
                 except (EOFError, OSError, ValueError):
                     break
                 if not data:
                     await asyncio.sleep(0.05)
                     continue
-                raw = data.encode("utf-8")
-                session.append_buffer(raw)
-                await self._broadcast(session, raw)
+                raw = data.encode("utf-8") if isinstance(data, str) else data
+                async with session.output_lock:
+                    session.append_buffer(raw)
+                    await self._broadcast(session, raw)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -259,6 +310,8 @@ class TerminalManager:
         finally:
             session.alive = False
             try:
+                if hasattr(proc, "_reap"):
+                    proc._reap()
                 session.exit_code = proc.exitstatus
             except Exception:
                 pass

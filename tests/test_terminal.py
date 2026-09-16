@@ -12,8 +12,8 @@ from llm_api_proxy_recorder.app import create_app
 from llm_api_proxy_recorder.config import AppConfig, TerminalConfig, UpstreamConfig
 
 pytestmark = pytest.mark.skipif(
-    sys.platform != "win32" or os.environ.get("LLMPR_SKIP_TERMINAL_TESTS"),
-    reason="终端模块依赖 Windows pywinpty",
+    sys.platform not in ("win32", "darwin") or os.environ.get("LLMPR_SKIP_TERMINAL_TESTS"),
+    reason="终端模块仅支持 Windows ConPTY 或 macOS PTY",
 )
 
 
@@ -25,8 +25,8 @@ def make_cfg(**terminal_overrides) -> AppConfig:
     )
 
 
-def make_client(cfg: AppConfig) -> TestClient:
-    app = create_app(cfg, config_path="term-test-config.json")
+def make_client(cfg: AppConfig, config_path: str = "term-test-config.json") -> TestClient:
+    app = create_app(cfg, config_path=config_path)
     return TestClient(app)
 
 
@@ -68,13 +68,16 @@ class TestResolve:
         # 完整路径探测
         assert resolve_executable(os.path.join(os.sep, "definitely", "not", "exist")) is None
 
-    def test_build_env_proxy_injection(self):
+    def test_build_env_proxy_injection(self, monkeypatch):
         from llm_api_proxy_recorder.terminal.manager import _build_env
+        for key in ("OPENAI_BASE_URL", "ANTHROPIC_BASE_URL", "OPENCODE_CONFIG_CONTENT"):
+            monkeypatch.delenv(key, raising=False)
 
         cfg = make_cfg()
         env = _build_env(cfg, "opencode")
         assert env["OPENAI_BASE_URL"] == "http://127.0.0.1:8117"
         assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8117"
+        assert json.loads(env["OPENCODE_CONFIG_CONTENT"])["provider"]["main"]["options"]["baseURL"] == "http://127.0.0.1:8117"
         # keep 策略不注入占位 key
         assert "OPENAI_API_KEY" not in env or env["OPENAI_API_KEY"] != "proxy-managed"
 
@@ -92,10 +95,13 @@ class TestResolve:
         cfg3 = make_cfg(proxy_upstream="main")
         env3 = _build_env(cfg3, "opencode")
         assert env3["OPENAI_BASE_URL"] == "http://127.0.0.1:8117/up/main"
+        cfg3.terminal.opencode_provider = "deepseek"
+        assert json.loads(_build_env(cfg3, "opencode")["OPENCODE_CONFIG_CONTENT"])["provider"]["deepseek"]["options"]["baseURL"] == "http://127.0.0.1:8117/up/main"
 
         # 关闭联动不注入
         env4 = _build_env(make_cfg(route_through_proxy=False), "opencode")
         assert "OPENAI_BASE_URL" not in env4
+        assert "OPENCODE_CONFIG_CONTENT" not in env4
 
         # shell 会话不注入代理变量
         env5 = _build_env(make_cfg(), "shell")
@@ -109,7 +115,7 @@ class TestResolve:
 # ------------------------------------------------------------------ REST + WS
 @pytest.fixture
 def client(tmp_path):
-    with make_client(make_cfg()) as c:
+    with make_client(make_cfg(), str(tmp_path / "config.json")) as c:
         c._tmp = str(tmp_path)
         yield c
 
@@ -135,7 +141,7 @@ class TestSessionsApi:
     def test_create_invalid_cwd(self, client):
         r = client.post(
             "/__recorder/api/terminal/sessions",
-            json={"cwd": r"D:\definitely\not\exist", "kind": "shell"},
+            json={"cwd": str(client._tmp) + os.sep + "definitely-not-exist", "kind": "shell"},
         )
         assert r.status_code == 400
         assert "不存在" in r.json()["detail"]
@@ -155,7 +161,7 @@ class TestSessionsApi:
         assert r.status_code == 422  # Literal 校验
 
     def test_disabled_terminal(self, tmp_path):
-        with make_client(make_cfg(enabled=False)) as c:
+        with make_client(make_cfg(enabled=False), str(tmp_path / "config.json")) as c:
             r = c.post(
                 "/__recorder/api/terminal/sessions",
                 json={"cwd": str(tmp_path), "kind": "shell"},
@@ -163,7 +169,8 @@ class TestSessionsApi:
             assert r.status_code == 400
 
     def test_max_sessions_limit(self, tmp_path):
-        with make_client(make_cfg(max_sessions=2, shell_command="powershell.exe")) as c:
+        from llm_api_proxy_recorder.terminal.manager import detect_shell
+        with make_client(make_cfg(max_sessions=2, shell_command=detect_shell()), str(tmp_path / "config.json")) as c:
             for _ in range(2):
                 r = c.post(
                     "/__recorder/api/terminal/sessions",
@@ -204,6 +211,29 @@ class TestWebSocket:
             with client.websocket_connect("/__recorder/api/terminal/ws/nope123"):
                 pass
 
+    async def test_attach_replay_then_live_without_duplicate(self):
+        from llm_api_proxy_recorder.terminal.manager import TerminalManager, TerminalSession
+
+        class Socket:
+            def __init__(self):
+                self.messages = []
+
+            async def send_text(self, text):
+                self.messages.append(("text", json.loads(text)["type"]))
+
+            async def send_bytes(self, data):
+                self.messages.append(("bytes", data))
+
+        session = TerminalSession("id", "shell", "/tmp", "tmp", "now", object(), 1024)
+        session.append_buffer(b"previous")
+        ws = Socket()
+        manager = TerminalManager()
+        await manager.attach(ws, session)
+        await manager._broadcast(session, b"next")
+        assert ws.messages == [
+            ("text", "attached"), ("bytes", b"previous"), ("bytes", b"next")
+        ]
+
 
 class TestFsApi:
     def test_roots(self, client):
@@ -232,3 +262,21 @@ class TestCheckApi:
         assert "opencode_found" in r
         assert "shell_command" in r
         assert r["enabled"] is True
+        assert r["pty_available"] is True
+
+
+class TestProjectsApi:
+    def test_project_survives_session_and_server_restart(self, tmp_path):
+        config_path = str(tmp_path / "config.json")
+        with make_client(make_cfg(), config_path) as c:
+            result = c.post("/__recorder/api/terminal/sessions", json={"cwd": str(tmp_path), "kind": "shell"})
+            assert result.status_code == 201, result.text
+            assert result.json()["project_saved"] is True
+            sid = result.json()["id"]
+            assert c.delete(f"/__recorder/api/terminal/sessions/{sid}").status_code == 200
+        with make_client(make_cfg(), config_path) as c:
+            projects = c.get("/__recorder/api/terminal/projects").json()["items"]
+            assert [p["path"] for p in projects] == [str(tmp_path)]
+            assert projects[0]["kind"] == "shell"
+            assert c.request("DELETE", "/__recorder/api/terminal/projects", json={"path": str(tmp_path)}).status_code == 200
+            assert c.get("/__recorder/api/terminal/projects").json()["total"] == 0

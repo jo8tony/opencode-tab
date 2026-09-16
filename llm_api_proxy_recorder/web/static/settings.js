@@ -57,9 +57,17 @@ function renderSettings(view) {
 
     /* ---------------- 上游行 */
     const upBox = el("div");
+    let upSel = null;
+    function syncTerminalUpstreams(selected = upSel && upSel.value) {
+      if (!upSel) return;
+      upSel.replaceChildren(el("option", { value: "", text: "（默认上游）" }),
+        ...ups.filter((u) => u.name).map((u) => el("option", { value: u.name, text: u.name })));
+      upSel.value = ups.some((u) => u.name === selected) ? selected : "";
+    }
     function renderUps() {
       upBox.replaceChildren();
       ups.forEach((u) => upBox.append(upCard(u)));
+      syncTerminalUpstreams();
     }
 
     function upCard(u) {
@@ -68,6 +76,7 @@ function renderSettings(view) {
         const old = u.name;
         u.name = nameIn.value.trim();
         if (defaultUp === old) defaultUp = u.name; // 默认上游改名跟随
+        syncTerminalUpstreams(upSel && upSel.value === old ? u.name : upSel && upSel.value);
       });
       const urlIn = el("input", { type: "text", value: u.base_url, placeholder: "https://api.example.com", class: "mono" });
       urlIn.addEventListener("input", () => { u.base_url = urlIn.value.trim(); });
@@ -183,31 +192,43 @@ function renderSettings(view) {
     /* ---------------- 终端设置 */
     const tc = cfg.terminal || {};
     const cmdIn = el("input", { type: "text", value: tc.command != null ? tc.command : "opencode", class: "mono", placeholder: "opencode（PATH 中的命令名或完整路径）" });
-    const shellIn = el("input", { type: "text", value: tc.shell_command || "", class: "mono", placeholder: "留空 = 自动探测 pwsh → powershell" });
+    const shellIn = el("input", { type: "text", value: tc.shell_command || "", class: "mono", placeholder: "留空 = 使用系统默认 shell" });
     const maxSessIn = el("input", { type: "number", value: tc.max_sessions != null ? tc.max_sessions : 8, min: "1", max: "64", style: "width:120px" });
     const sbIn = el("input", { type: "number", value: tc.scrollback_kb != null ? tc.scrollback_kb : 256, min: "0", max: "8192", style: "width:120px" });
-    const upSel = el("select", null,
-      el("option", { value: "", text: "（默认上游）" }),
-      ...ups.map((u) => el("option", { value: u.name, text: u.name })));
-    upSel.value = tc.proxy_upstream || "";
+    upSel = el("select");
+    syncTerminalUpstreams(tc.proxy_upstream || "");
     const envTa = el("textarea", { rows: "3", class: "mono", placeholder: "额外环境变量，每行一条：KEY=Value" });
     envTa.value = Object.entries(tc.inject_env || {}).map(([k, v]) => k + "=" + v).join("\n");
     const [termSw, termChk] = mkSwitch("启用 Web 终端（terminal.enabled）", tc.enabled !== false);
-    const [rtpSw, rtpChk] = mkSwitch("opencode 流量经本代理（route_through_proxy）", tc.route_through_proxy !== false);
+    const modeSel = el("select", null,
+      el("option", { value: "proxy", text: "使用本代理接口" }),
+      el("option", { value: "original", text: "使用 OpenCode 原始配置" }));
+    modeSel.value = tc.route_through_proxy !== false ? "proxy" : "original";
+    const providerIn = el("input", { type: "text", value: tc.opencode_provider || "", class: "mono", placeholder: "留空 = 使用所选上游名称，如 deepseek" });
+    const syncMode = () => {
+      upSel.disabled = modeSel.value !== "proxy";
+      providerIn.disabled = modeSel.value !== "proxy";
+    };
+    modeSel.addEventListener("change", syncMode);
+    syncMode();
 
     view.append(el("section", { class: "card" },
       el("div", { class: "card-head-row" },
         el("h2", { text: "Web 终端" }),
         el("span", { class: "empty-hint", text: "浏览器中管理 opencode / shell 会话；保存后新会话生效" })),
       el("div", { class: "settings-grid" },
-        termSw, rtpSw,
+        termSw,
+        el("div", { class: "field full" }, el("label", { class: "f-label", text: "OpenCode 接口来源" }), modeSel,
+          el("div", { class: "f-hint", text: "本代理：仅对新启动的 OpenCode 会话设置 provider 接口地址；原始配置：直接使用 OpenCode 自己的配置" })),
         el("div", { class: "field" }, el("label", { class: "f-label", text: "opencode 命令 command" }), cmdIn),
         el("div", { class: "field" }, el("label", { class: "f-label", text: "shell 命令 shell_command" }), shellIn),
         el("div", { class: "field" }, el("label", { class: "f-label", text: "会话上限 max_sessions" }), maxSessIn),
         el("div", { class: "field" }, el("label", { class: "f-label", text: "回放缓冲 scrollback_kb" }), sbIn,
           el("div", { class: "f-hint", text: "重连浏览器时回放的输出大小（KB）" })),
         el("div", { class: "field" }, el("label", { class: "f-label", text: "联动上游 proxy_upstream" }), upSel,
-          el("div", { class: "f-hint", text: "opencode 的 LLM 请求经该命名上游转发（进入轨迹记录）" })),
+          el("div", { class: "f-hint", text: "OpenCode 请求经该上游转发，并进入调用记录" })),
+        el("div", { class: "field" }, el("label", { class: "f-label", text: "OpenCode provider ID" }), providerIn,
+          el("div", { class: "f-hint", text: "对应 OpenCode 配置中的 provider 名称；留空时与所选上游同名" })),
         el("div", { class: "field full" }, el("label", { class: "f-label", text: "注入环境变量 inject_env" }), envTa))));
 
     /* ---------------- 数据清理 */
@@ -355,8 +376,9 @@ function renderSettings(view) {
           shell_command: shellIn.value.trim(),
           max_sessions: Math.max(1, parseInt(maxSessIn.value, 10) || 8),
           scrollback_kb: Math.max(0, parseInt(sbIn.value, 10) || 0),
-          route_through_proxy: rtpChk.checked,
+          route_through_proxy: modeSel.value === "proxy",
           proxy_upstream: upSel.value || "",
+          opencode_provider: providerIn.value.trim(),
           inject_env: parseExtra(envTa.value),
         },
       };

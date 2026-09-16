@@ -9,12 +9,13 @@ let TERM = null;
 function renderTerminal(view) {
   view.replaceChildren(el("div", { class: "loading", text: "加载中…" }));
   (async () => {
-    let meta, check, sessions;
+    let meta, check, sessions, projects;
     try {
-      [meta, check, sessions] = await Promise.all([
+      [meta, check, sessions, projects] = await Promise.all([
         api("meta"),
         api("terminal/check", { silent: true }),
         api("terminal/sessions"),
+        api("terminal/projects"),
       ]);
     } catch (e) {
       view.replaceChildren(errorCard("加载终端失败：" + (e.detail ? format422(e.detail) : e.message), () => route()));
@@ -25,8 +26,10 @@ function renderTerminal(view) {
       adminPrefix: meta.admin_prefix || "/__recorder",
       check,
       byId: new Map(),
+      projects: projects.items || [],
       activeId: null,
       sideList: null,
+      projectList: null,
       tabs: null,
       area: null,
       empty: null,
@@ -34,12 +37,14 @@ function renderTerminal(view) {
     };
 
     const newBtn = el("button", { class: "btn btn-primary", type: "button", text: "+ 新建会话", onclick: () => openCreateModal() });
+    newBtn.disabled = !check.pty_available || !check.enabled;
     const hint = el("div", {
       class: "term-hint " + (check.opencode_found ? "ok" : "warn"),
-      text: check.opencode_found ? "opencode 已就绪" : "未检测到 opencode，可先使用 shell 会话",
+      text: !check.pty_available ? "当前系统缺少终端依赖" : check.opencode_found ? "opencode 已就绪" : "未检测到 opencode，可先使用 shell 会话",
     });
 
     TERM.sideList = el("div", { class: "term-list" });
+    TERM.projectList = el("div", { class: "term-project-list" });
     TERM.tabs = el("div", { class: "term-tabs" });
     TERM.area = el("div", { class: "term-area" });
     TERM.empty = el("div", { class: "term-empty-wrap" },
@@ -49,7 +54,10 @@ function renderTerminal(view) {
       el("section", { class: "term-page" },
         el("aside", { class: "term-side" },
           el("div", { class: "term-side-head" }, newBtn, hint),
-          TERM.sideList),
+          el("div", { class: "term-side-section", text: "运行中的会话" }),
+          TERM.sideList,
+          el("div", { class: "term-side-section", text: "已保存的项目" }),
+          TERM.projectList),
         el("div", { class: "term-main" }, TERM.tabs, TERM.area)));
 
     // 已有会话逐个挂接（服务重启前残留的会话仍在运行）
@@ -86,12 +94,18 @@ function addSession(info, { focus }) {
     scrollback: 5000,
     fontSize: 13,
     fontFamily: '"SF Mono", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace',
+    minimumContrastRatio: 4.5,
     cursorBlink: true,
     theme: {
       background: "#181d27",
       foreground: "#e6e9ef",
       cursor: "#3b82f6",
       selectionBackground: "rgba(59, 130, 246, .35)",
+      black: "#242b38", red: "#ff6b75", green: "#75dca4", yellow: "#f6cc7a",
+      blue: "#86b7ff", magenta: "#d8a0fa", cyan: "#79d9e8", white: "#e6e9ef",
+      brightBlack: "#8893a4", brightRed: "#ff8e95", brightGreen: "#a3efc0",
+      brightYellow: "#ffe0a3", brightBlue: "#acd0ff", brightMagenta: "#e8c5ff",
+      brightCyan: "#aaedf5", brightWhite: "#ffffff",
     },
   });
   s.fit = new FitAddon.FitAddon();
@@ -152,7 +166,12 @@ function connect(s) {
     if (typeof ev.data === "string") {
       let msg = null;
       try { msg = JSON.parse(ev.data); } catch (_) { return; }
-      if (msg.type === "attached" && msg.alive === false) markExited(s, null);
+      if (msg.type === "attached") {
+        // 每次连接都从服务器回放缓冲重新建立画面；清掉旧画面，避免重连重复叠字。
+        s.term.reset();
+        if (TERM && TERM.activeId === s.id) sendResize(s);
+      }
+      if (msg.type === "exit") markExited(s, msg.code);
     } else {
       s.term.write(new Uint8Array(ev.data));
     }
@@ -240,6 +259,7 @@ function refreshAll() {
   if (!TERM) return;
   refreshTabs();
   refreshSideList();
+  refreshProjectList();
   refreshEmpty();
 }
 
@@ -275,6 +295,39 @@ function refreshSideList() {
   }
 }
 
+function refreshProjectList() {
+  TERM.projectList.replaceChildren();
+  if (!TERM.projects.length) {
+    TERM.projectList.append(el("div", { class: "term-project-empty", text: "启动项目后会自动保存到这里" }));
+    return;
+  }
+  for (const project of TERM.projects) {
+    TERM.projectList.append(el("div", { class: "term-project-item", title: project.path },
+      el("button", { class: "term-project-open", type: "button", onclick: () => openCreateModal(project) },
+        el("span", { class: "term-side-title", text: project.name }),
+        el("span", { class: "term-side-path mono", text: project.path })),
+      el("button", { class: "term-project-delete", type: "button", title: "从项目列表移除", text: "×", onclick: () => removeProject(project) })));
+  }
+}
+
+async function reloadProjects() {
+  try {
+    const result = await api("terminal/projects", { silent: true });
+    if (TERM) { TERM.projects = result.items || []; refreshProjectList(); }
+  } catch (e) {
+    toast("读取项目列表失败：" + (e.detail || e.message), "error");
+  }
+}
+
+async function removeProject(project) {
+  try {
+    await api("terminal/projects", { method: "DELETE", body: { path: project.path }, silent: true });
+    await reloadProjects();
+  } catch (e) {
+    toast("移除项目失败：" + (e.detail || e.message), "error");
+  }
+}
+
 function refreshEmpty() {
   const has = TERM.byId.size > 0;
   TERM.area.classList.toggle("has-sessions", has);
@@ -286,13 +339,14 @@ function refreshEmpty() {
 }
 
 /* ============================================================ 新建会话弹窗 */
-function openCreateModal() {
+function openCreateModal(project = null) {
   const check = TERM.check;
 
   const cwdInput = el("input", {
-    type: "text", class: "mono", placeholder: "项目目录绝对路径，如 D:\\project\\my-app",
+    type: "text", class: "mono", placeholder: check.platform === "darwin" ? "/Users/你的用户名/Projects/my-app" : "项目目录绝对路径，如 D:\\project\\my-app",
     autocomplete: "off", spellcheck: "false",
   });
+  if (project) cwdInput.value = project.path;
 
   // 目录浏览器（懒加载子目录）
   const browser = el("div", { class: "term-browser hidden" });
@@ -324,7 +378,17 @@ function openCreateModal() {
     // 面包屑：根 → 逐级
     const crumb = el("div", { class: "term-crumb" });
     if (!r.path) {
-      crumb.append(el("span", { class: "term-crumb-item", text: "此电脑" }));
+      crumb.append(el("span", { class: "term-crumb-item", text: check.platform === "darwin" ? "根目录" : "此电脑" }));
+    } else if (String(r.path).startsWith("/")) {
+      crumb.append(el("span", { class: "term-crumb-item clickable", text: "/", onclick: () => loadFs("/") }));
+      const parts = String(r.path).split("/").filter(Boolean);
+      let target = "";
+      parts.forEach((part) => {
+        target += "/" + part;
+        const current = target;
+        crumb.append(el("span", { class: "term-crumb-sep", text: "/" }),
+          el("span", { class: "term-crumb-item clickable", text: part, onclick: () => loadFs(current) }));
+      });
     } else {
       // parts[0] 形如 “D:”（盘符本身已带冒号），逐级重建各级目标路径
       const parts = String(r.path).split(/[\\/]+/).filter(Boolean);
@@ -368,6 +432,10 @@ function openCreateModal() {
     const shellRadio = shellOpt.querySelector("input");
     if (shellRadio) shellRadio.checked = true;
   }
+  if (project && project.kind === "shell") {
+    opencodeOpt.querySelector("input").checked = false;
+    shellOpt.querySelector("input").checked = true;
+  }
 
   const errLine = el("div", { class: "term-modal-err" });
   const startBtn = el("button", { class: "btn btn-primary", type: "button", text: "启动会话", onclick: async () => {
@@ -381,6 +449,8 @@ function openCreateModal() {
       mask.remove();
       addSession(info, { focus: true });
       refreshAll();
+      if (info.project_saved) reloadProjects();
+      else toast("会话已启动，但项目目录未能保存", "error");
       toast("会话已启动：" + (info.title || cwd), "");
     } catch (e) {
       errLine.textContent = "启动失败：" + (e.detail ? format422(e.detail) : e.message);
