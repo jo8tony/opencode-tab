@@ -70,12 +70,35 @@ class RecordingConfig(BaseModel):
     retention_days: int = Field(0, ge=0, le=36500)
 
 
+class TerminalConfig(BaseModel):
+    """Web 终端模块：浏览器中管理 opencode / shell 会话。"""
+
+    enabled: bool = True
+    # opencode 命令（创建会话时用 PATH 解析；支持完整路径）
+    command: str = "opencode"
+    # 传给 opencode 的额外参数
+    args: list[str] = Field(default_factory=list)
+    # 通用 shell 命令；空 = 自动探测 pwsh.exe → powershell.exe
+    shell_command: str = ""
+    # 并发会话上限
+    max_sessions: int = Field(8, ge=1, le=64)
+    # 每会话环形回放缓冲（KB，重连时回放给浏览器）
+    scrollback_kb: int = Field(256, ge=0, le=8192)
+    # 启动 opencode 时注入代理环境变量，使 LLM 请求经本代理（进入轨迹记录）
+    route_through_proxy: bool = True
+    # 走哪个命名上游；空 = 默认上游
+    proxy_upstream: str = ""
+    # 注入进程的额外环境变量（优先级最高，可覆盖代理注入）
+    inject_env: dict[str, str] = Field(default_factory=dict)
+
+
 class AppConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     upstreams: list[UpstreamConfig]
     default_upstream: str
     outbound: OutboundConfig = Field(default_factory=OutboundConfig)
     recording: RecordingConfig = Field(default_factory=RecordingConfig)
+    terminal: TerminalConfig = Field(default_factory=TerminalConfig)
 
     @model_validator(mode="after")
     def _check_upstreams(self) -> "AppConfig":

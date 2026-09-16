@@ -14,11 +14,13 @@
 - **数据清理**：按日期删除、清空全部、保留策略（`retention_days` 自动清理），调用详情页单条删除
 - **脱敏**：请求头可配置脱敏（`authorization` 等），记录时替换为 `***`
 - **凭据透传**：`key_strategy` 默认 `keep`，完整透传客户端凭据头；可选 `replace` 注入上游 key
+- **Web 终端**（Windows）：浏览器中启动多个 opencode / shell 会话，选择项目目录、目录浏览器导航、多 tab 并行、断线自动重连、会话在服务重启前保活
 
 ## 环境要求
 
 - Python ≥ 3.10
 - 依赖：FastAPI / uvicorn / httpx / pydantic（见 `pyproject.toml`）
+- Web 终端功能仅限 Windows（依赖 `pywinpty` ConPTY），且需 `opencode` 在 PATH 中（可选，缺失时仍可启动 shell 会话）
 
 ## 安装
 
@@ -128,7 +130,23 @@ curl http://127.0.0.1:8117/up/deepseek/v1/chat/completions -H "Content-Type: app
 | 仪表盘 | 概览统计（记录数、错误、token 等） |
 | 调用列表 | 分页/过滤/搜索全部调用，可进入详情，详情页可删除单条 |
 | 轨迹 | 按会话聚合的时间轴 + 轮次账本，右侧 Inspector 多 Tab 分析 |
-| 设置 | 上游服务（含测试连通）、出站代理、记录设置、**数据清理** |
+| 终端 | 浏览器中的多会话终端（opencode / shell），详见下方「Web 终端」 |
+| 设置 | 上游服务（含测试连通）、出站代理、记录设置、**数据清理**、Web 终端 |
+
+## Web 终端
+
+在浏览器中直接操作命令行版 opencode（或通用 shell），无需手动 cd 目录：
+
+1. 打开 Web UI → 「终端」→「+ 新建会话」
+2. 选择会话类型（opencode / shell），通过**目录浏览器**（盘符 → 逐级子目录，支持面包屑跳转）或直接粘贴路径选择项目目录
+3. 「启动会话」即在该目录下通过 ConPTY 启动 opencode TUI，完整界面渲染在浏览器 xterm.js 中
+4. 多个项目可同时开启会话，tab / 侧栏切换；关闭 tab 即终止进程；意外退出可一键重启（同目录同类型）
+
+行为细节：
+
+- 会话由服务端托管，**浏览器关闭/断网不杀进程**，重新打开自动恢复；WebSocket 断线自动重连并回放缓冲
+- opencode 会话默认注入 `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` 指向本代理（可在设置中关闭或指定上游），LLM 调用即被完整录制
+- 相关设置：设置页「Web 终端」（命令、默认 shell、最大会话数、滚动缓冲、代理联动）
 
 ## 管理端 API
 
@@ -150,6 +168,12 @@ curl http://127.0.0.1:8117/up/deepseek/v1/chat/completions -H "Content-Type: app
 | PUT | `/settings` | 保存配置（部分项需重启） |
 | POST | `/settings/test-upstream` | 测试上游连通性 |
 | GET | `/meta` | 服务元信息 |
+| GET | `/terminal/check` | 检测 opencode / shell 命令 |
+| GET | `/terminal/sessions` | 终端会话列表 |
+| POST | `/terminal/sessions` | 创建会话（`cwd` / `kind` / 尺寸） |
+| DELETE | `/terminal/sessions/{id}` | 终止会话 |
+| GET | `/terminal/fs` | 目录浏览（无 `path` → 盘符列表） |
+| WS | `/terminal/ws/{id}` | 终端流（输入/resize；输出二进制帧） |
 
 ## 数据存储
 
@@ -194,5 +218,8 @@ llm_api_proxy_recorder/
 │   ├── redact.py       # 头脱敏
 │   ├── sse.py          # SSE 解析器
 │   └── store.py        # 文件存储/索引/清理/统计
-└── web/static/         # Web UI（原生 JS：app/calls/trajectory/settings 等）
+├── terminal/           # Web 终端（Windows ConPTY）
+│   ├── manager.py      # PTY 会话管理（spawn/IO 泵/缓冲/生命周期）
+│   └── routes.py       # 会话 CRUD + 目录浏览 + WebSocket
+└── web/static/         # Web UI（原生 JS：app/calls/trajectory/settings/terminal 等）
 ```

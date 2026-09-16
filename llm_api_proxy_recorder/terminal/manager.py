@@ -1,0 +1,283 @@
+"""终端会话管理：pywinpty(ConPTY) 托管 opencode / shell 进程。
+
+设计要点：
+- 每个会话一个输出泵任务：阻塞 read 放线程池，读到数据后广播给所有已连接
+  WebSocket 客户端并追加环形回放缓冲；EOF/异常即视为进程退出。
+- 会话生命周期 = 服务进程生命周期；服务关闭时统一 kill，避免孤儿进程。
+- 环境注入（联动代理）：仅 opencode 会话注入 OPENAI/ANTHROPIC_BASE_URL，
+  使其 LLM 请求经本代理转发，进入轨迹记录体系。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import shutil
+import time
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from starlette.websockets import WebSocket
+
+from llm_api_proxy_recorder.config import AppConfig
+
+logger = logging.getLogger("llm_api_proxy_recorder")
+
+try:
+    from winpty import PtyProcess  # type: ignore[import-not-found]
+except ImportError:  # 非 Windows 平台：模块不可用，create 时报错
+    PtyProcess = None  # type: ignore[assignment]
+
+# 会话占位 API key：仅上游 key_strategy=replace 时注入（代理侧会替换真实 key）
+PLACEHOLDER_KEY = "proxy-managed"
+
+
+class TerminalError(Exception):
+    """终端操作失败：携带 HTTP 状态码与 detail。"""
+
+    def __init__(self, detail: str, status: int = 400):
+        super().__init__(detail)
+        self.detail = detail
+        self.status = status
+
+
+@dataclass
+class TerminalSession:
+    id: str
+    kind: str  # "opencode" | "shell"
+    cwd: str
+    title: str
+    created_at: str
+    proc: object
+    max_buffer: int  # 回放缓冲字节上限（0=禁用）
+    alive: bool = True
+    exit_code: int | None = None
+    clients: set = field(default_factory=set)
+    buffer: list[bytes] = field(default_factory=list)
+    buf_size: int = 0
+    pump_task: asyncio.Task | None = None
+
+    def append_buffer(self, raw: bytes) -> None:
+        if self.max_buffer <= 0:
+            return
+        self.buffer.append(raw)
+        self.buf_size += len(raw)
+        while self.buf_size > self.max_buffer and len(self.buffer) > 1:
+            self.buf_size -= len(self.buffer.pop(0))
+
+    def info(self) -> dict:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "cwd": self.cwd,
+            "title": self.title,
+            "alive": self.alive,
+            "exit_code": self.exit_code,
+            "created_at": self.created_at,
+            "clients": len(self.clients),
+        }
+
+
+# ------------------------------------------------------------------ 命令解析
+def detect_shell() -> str:
+    """通用 shell：pwsh 优先，回退 powershell。"""
+    for name in ("pwsh.exe", "powershell.exe"):
+        if shutil.which(name):
+            return name
+    return "powershell.exe"
+
+
+def resolve_executable(command: str) -> str | None:
+    """解析命令到完整可执行路径；找不到返回 None。支持完整路径或 PATH 查找。"""
+    command = command.strip()
+    if not command:
+        return None
+    if os.path.sep in command or (len(command) >= 2 and command[1] == ":"):
+        p = Path(command).expanduser()
+        return str(p) if p.is_file() else None
+    return shutil.which(command)
+
+
+def _build_argv(exe: str, args: list[str]) -> list[str]:
+    """npm shim（.cmd/.bat）不能被 CreateProcess 直接执行，需经 cmd.exe /c 包装。"""
+    if exe.lower().endswith((".cmd", ".bat")):
+        return ["cmd.exe", "/c", exe, *args]
+    return [exe, *args]
+
+
+def _build_env(cfg: AppConfig, kind: str) -> dict[str, str]:
+    """进程环境：基础 TERM + （opencode 且开启联动时）代理地址注入 + 用户 inject_env。"""
+    env = dict(os.environ)
+    env["TERM"] = "xterm-256color"
+    env["COLORTERM"] = "truecolor"
+    t = cfg.terminal
+    if kind == "opencode" and t.route_through_proxy:
+        base = f"http://127.0.0.1:{cfg.server.port}"
+        if t.proxy_upstream:
+            base = f"{base}/up/{t.proxy_upstream}"
+            upstream_name = t.proxy_upstream
+        else:
+            upstream_name = cfg.default_upstream
+        env["OPENAI_BASE_URL"] = base
+        env["ANTHROPIC_BASE_URL"] = base
+        up = next((u for u in cfg.upstreams if u.name == upstream_name), None)
+        if up is not None and up.key_strategy == "replace":
+            # 代理侧会注入真实 key，这里给占位值让 opencode 的 provider 校验通过
+            env.setdefault("OPENAI_API_KEY", PLACEHOLDER_KEY)
+            env.setdefault("ANTHROPIC_API_KEY", PLACEHOLDER_KEY)
+    env.update(t.inject_env)  # 用户配置优先级最高
+    return env
+
+
+# ---------------------------------------------------------------------- 管理器
+class TerminalManager:
+    def __init__(self) -> None:
+        self.sessions: dict[str, TerminalSession] = {}
+
+    # ------------------------------------------------------------ 会话生命周期
+    async def create(
+        self, cfg: AppConfig, cwd: str, kind: str, rows: int, cols: int
+    ) -> TerminalSession:
+        t = cfg.terminal
+        if not t.enabled:
+            raise TerminalError("终端模块未启用（settings 中 terminal.enabled）")
+        if PtyProcess is None:
+            raise TerminalError("当前平台缺少 pywinpty，无法创建终端会话", 500)
+        if len(self.sessions) >= t.max_sessions:
+            raise TerminalError(f"已达会话上限（max_sessions={t.max_sessions}）")
+
+        path = Path(cwd).expanduser()
+        if not path.is_absolute():
+            raise TerminalError("cwd 必须是绝对路径")
+        if not path.is_dir():
+            raise TerminalError(f"目录不存在或不是文件夹：{path}")
+
+        if kind == "opencode":
+            command, args = t.command, list(t.args)
+        elif kind == "shell":
+            command, args = t.shell_command or detect_shell(), []
+        else:
+            raise TerminalError(f"未知会话类型：{kind}")
+
+        exe = resolve_executable(command)
+        if exe is None:
+            raise TerminalError(f"未找到命令 {command}，请确认已安装并在 PATH 中")
+        argv = _build_argv(exe, args)
+        env = _build_env(cfg, kind)
+
+        sid = uuid.uuid4().hex[:12]
+        try:
+            proc = await asyncio.to_thread(
+                PtyProcess.spawn, argv, str(path), env, (rows, cols)
+            )
+        except FileNotFoundError as e:
+            raise TerminalError(f"未找到命令 {command}：{e}") from e
+        except Exception as e:
+            raise TerminalError(f"启动失败：{type(e).__name__}: {e}") from e
+
+        session = TerminalSession(
+            id=sid,
+            kind=kind,
+            cwd=str(path),
+            title=path.name or str(path),
+            created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+            proc=proc,
+            max_buffer=t.scrollback_kb * 1024,
+        )
+        self.sessions[sid] = session
+        session.pump_task = asyncio.create_task(self._pump(session))
+        logger.info("终端会话 %s 启动：%s（cwd=%s）", sid, " ".join(argv)[:200], path)
+        return session
+
+    def get(self, session_id: str) -> TerminalSession | None:
+        return self.sessions.get(session_id)
+
+    def list(self) -> list[dict]:
+        return [s.info() for s in self.sessions.values()]
+
+    async def kill(self, session_id: str) -> bool:
+        session = self.sessions.pop(session_id, None)
+        if session is None:
+            return False
+        session.alive = False
+        try:
+            # close(force=True)：关 socket（解除泵阻塞）+ 强杀进程
+            await asyncio.to_thread(session.proc.close, True)
+        except Exception:
+            logger.warning("终端会话 %s 关闭进程失败", session_id, exc_info=True)
+        logger.info("终端会话 %s 已终止（cwd=%s）", session_id, session.cwd)
+        return True
+
+    async def shutdown(self) -> None:
+        """服务退出时终止全部会话进程。"""
+        ids = list(self.sessions)
+        if ids:
+            await asyncio.gather(*(self.kill(sid) for sid in ids))
+
+    # ------------------------------------------------------------ 客户端交互
+    async def attach(self, websocket: WebSocket, session: TerminalSession) -> bytes:
+        session.clients.add(websocket)
+        return b"".join(session.buffer)  # 回放缓冲
+
+    def detach(self, websocket: WebSocket, session: TerminalSession) -> None:
+        session.clients.discard(websocket)
+
+    async def write(self, session: TerminalSession, text: str) -> None:
+        try:
+            await asyncio.to_thread(session.proc.write, text)
+        except (EOFError, OSError, ValueError):
+            pass  # 进程已退出，忽略写入
+
+    def resize(self, session: TerminalSession, cols: int, rows: int) -> None:
+        try:
+            session.proc.setwinsize(rows, cols)
+        except Exception:
+            logger.debug("会话 %s resize 失败", session.id, exc_info=True)
+
+    # ---------------------------------------------------------------- 输出泵
+    async def _pump(self, session: TerminalSession) -> None:
+        proc = session.proc
+        try:
+            while True:
+                try:
+                    # pywinpty read() 阻塞直至有数据；返回 UTF-8 str，EOF 抛 EOFError
+                    data = await asyncio.to_thread(proc.read, 65536)
+                except (EOFError, OSError, ValueError):
+                    break
+                if not data:
+                    await asyncio.sleep(0.05)
+                    continue
+                raw = data.encode("utf-8")
+                session.append_buffer(raw)
+                await self._broadcast(session, raw)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("终端会话 %s 输出泵异常", session.id, exc_info=True)
+        finally:
+            session.alive = False
+            try:
+                session.exit_code = proc.exitstatus
+            except Exception:
+                pass
+            await self._notify_exit(session)
+            logger.info("终端会话 %s 进程退出（code=%s）", session.id, session.exit_code)
+
+    async def _broadcast(self, session: TerminalSession, raw: bytes) -> None:
+        for ws in list(session.clients):
+            try:
+                await ws.send_bytes(raw)
+            except Exception:
+                session.clients.discard(ws)
+
+    async def _notify_exit(self, session: TerminalSession) -> None:
+        import json
+
+        msg = json.dumps({"type": "exit", "code": session.exit_code})
+        for ws in list(session.clients):
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                session.clients.discard(ws)

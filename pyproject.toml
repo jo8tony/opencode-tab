@@ -12,6 +12,8 @@ dependencies = [
     "uvicorn>=0.29",
     "httpx>=0.27",
     "pydantic>=2.6",
+    "pywinpty>=2.2; sys_platform == 'win32'",
+    "websockets>=12",
 ]
 
 [project.optional-dependencies]

@@ -204,6 +204,7 @@ const routes = [
   { re: /^#\/calls\/(.+)$/, nav: "calls", render: (view, m) => renderCallDetail(view, decodeURIComponent(m[1])) },
   { re: /^#\/trajectory$/, nav: "trajectory", render: (view) => renderTrajectoryList(view) },
   { re: /^#\/trajectory\/(.+)$/, nav: "trajectory", render: (view, m) => renderTrajectorySession(view, decodeURIComponent(m[1])) },
+  { re: /^#\/terminal$/, nav: "terminal", render: (view) => renderTerminal(view) },
   { re: /^#\/settings$/, nav: "settings", render: (view) => renderSettings(view) },
 ];
 
@@ -222,7 +223,7 @@ function route() {
     const m = hash.match(r.re);
     if (m) {
       setNav(r.nav);
-      document.title = "LLM API 代理记录器 · " + ({ dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", settings: "设置" }[r.nav] || "");
+      document.title = "LLM API 代理记录器 · " + ({ dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", terminal: "终端", settings: "设置" }[r.nav] || "");
       r.render(view, m);
       return;
     }

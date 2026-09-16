@@ -16,6 +16,8 @@ from llm_api_proxy_recorder.config import CONFIG_PATH, AppConfig, resolved_recor
 from llm_api_proxy_recorder.proxy.client import UpstreamClient
 from llm_api_proxy_recorder.proxy.handler import proxy_endpoint
 from llm_api_proxy_recorder.recording.store import CallStore
+from llm_api_proxy_recorder.terminal import TerminalManager
+from llm_api_proxy_recorder.terminal.routes import router as terminal_router
 
 logger = logging.getLogger("llm_api_proxy_recorder")
 
@@ -58,6 +60,7 @@ class RuntimeState:
         self.config = config
         self.upstream_client = UpstreamClient(config.outbound.proxy_url)
         self.store = CallStore(resolved_records_dir(config))
+        self.terminal = TerminalManager()
 
     async def apply_config(self, new_cfg: AppConfig) -> None:
         """热更新：换 config 引用；出站代理变化时重建客户端；记录目录变化时重建 store。"""
@@ -91,6 +94,11 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
             yield
         finally:
             sweeper.cancel()
+            # 终止全部终端会话进程，避免孤儿进程
+            try:
+                await runtime.terminal.shutdown()
+            except Exception:
+                logger.warning("终端会话清理失败", exc_info=True)
             await runtime.aclose()
 
     app = FastAPI(title="llm-api-proxy-recorder", lifespan=lifespan)
@@ -105,6 +113,9 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
 
     # 管理 API 路由集（ping 之后、兜底代理路由之前）
     app.include_router(admin_router, prefix=f"{cfg.server.admin_prefix}/api")
+
+    # 终端 API（REST + WebSocket，同样先于兜底代理路由注册）
+    app.include_router(terminal_router, prefix=f"{cfg.server.admin_prefix}/api")
 
     # 静态 Web UI：admin 路由已注册在前，不会被吞掉 {admin_prefix}/api/*
     static_dir = Path(__file__).parent / "web" / "static"
