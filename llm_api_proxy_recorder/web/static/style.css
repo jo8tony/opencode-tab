@@ -307,6 +307,17 @@ details.raw-chunks summary:hover { text-decoration: underline; }
 .inline-controls { display: flex; gap: 6px; align-items: center; }
 .inline-controls input { flex: 1; }
 .up-actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.model-list { display: grid; gap: 8px; margin: 6px 0 10px; }
+.model-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 8px;
+}
+.model-row > input { flex: 1 1 190px; min-width: 160px; }
+.model-capabilities { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.model-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; }
+.model-toggle input { margin: 0; }
+.model-row > button { margin-left: auto; }
+.opencode-editor { width: 100%; margin-top: 10px; min-height: 260px; tab-size: 2; }
 .test-res { font-size: 12px; font-family: var(--mono); }
 .test-res.ok { color: var(--green); }
 .test-res.err { color: var(--red); }

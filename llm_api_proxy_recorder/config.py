@@ -24,10 +24,31 @@ class ServerConfig(BaseModel):
         return v
 
 
+class UpstreamModelConfig(BaseModel):
+    id: str
+    # text 始终可输入；其余输入模态按模型能力显式开启。
+    input_modalities: list[Literal["image", "audio", "video", "pdf"]] = Field(default_factory=list)
+
+    @field_validator("id")
+    @classmethod
+    def _model_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value or any(ch.isspace() for ch in value):
+            raise ValueError("模型 ID 不能为空或包含空白字符")
+        return value
+
+    @field_validator("input_modalities")
+    @classmethod
+    def _unique_modalities(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(values))
+
+
 class UpstreamConfig(BaseModel):
     name: str
     base_url: str
     api_key: str = ""
+    # Web 终端 OpenCode 手动模型及其输入能力。
+    models: list[UpstreamModelConfig] = Field(default_factory=list)
     extra_headers: dict[str, str] = Field(default_factory=dict)
     # 默认 keep：完全透明透传客户端凭据头；显式配置 replace 才注入上游 key
     key_strategy: Literal["replace", "keep"] = "keep"
@@ -38,6 +59,13 @@ class UpstreamConfig(BaseModel):
         if not (v.startswith("http://") or v.startswith("https://")):
             raise ValueError("base_url 必须以 http:// 或 https:// 开头")
         return v
+
+    @model_validator(mode="after")
+    def _check_models(self) -> "UpstreamConfig":
+        ids = [model.id for model in self.models]
+        if len(ids) != len(set(ids)):
+            raise ValueError("同一上游的模型 ID 不能重复")
+        return self
 
 
 class OutboundConfig(BaseModel):

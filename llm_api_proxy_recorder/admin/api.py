@@ -8,12 +8,15 @@ import time
 from datetime import datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from llm_api_proxy_recorder import __version__
 from llm_api_proxy_recorder.config import AppConfig, resolved_records_dir, save_config
+from llm_api_proxy_recorder.admin.opencode_config import (
+    read_global_config, validate_jsonc, write_global_config,
+)
 from llm_api_proxy_recorder.recording.parse import diff_new_messages, message_digest, system_text
 
 logger = logging.getLogger("llm_api_proxy_recorder")
@@ -378,6 +381,29 @@ async def put_settings(new_cfg: AppConfig, request: Request) -> dict:
     await runtime.apply_config(new_cfg)
     request.app.state.config = new_cfg  # 兼容旧引用
     return {"ok": True, "restart_required": restart_required}
+
+
+@router.get("/settings/opencode-config")
+def get_opencode_config() -> dict:
+    path, content, revision = read_global_config()
+    return {"path": str(path), "content": content, "revision": revision}
+
+
+class OpenCodeConfigUpdate(BaseModel):
+    content: str = Field(max_length=1024 * 1024)
+    revision: str
+
+
+@router.put("/settings/opencode-config")
+def put_opencode_config(body: OpenCodeConfigUpdate) -> dict:
+    path, _, revision = read_global_config()
+    if body.revision != revision:
+        raise HTTPException(status_code=409, detail="配置文件已在别处修改，请重新加载后再保存")
+    try:
+        validate_jsonc(body.content)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"ok": True, "path": str(path), "revision": write_global_config(path, body.content)}
 
 
 class TestUpstreamBody(BaseModel):

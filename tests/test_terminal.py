@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from llm_api_proxy_recorder.app import create_app
-from llm_api_proxy_recorder.config import AppConfig, TerminalConfig, UpstreamConfig
+from llm_api_proxy_recorder.config import AppConfig, TerminalConfig, UpstreamConfig, UpstreamModelConfig
 
 pytestmark = pytest.mark.skipif(
     sys.platform not in ("win32", "darwin") or os.environ.get("LLMPR_SKIP_TERMINAL_TESTS"),
@@ -110,6 +110,31 @@ class TestResolve:
         # inject_env 优先级最高
         env6 = _build_env(make_cfg(inject_env={"OPENAI_BASE_URL": "http://override"}), "opencode")
         assert env6["OPENAI_BASE_URL"] == "http://override"
+
+    def test_manual_models_and_image_support_in_offline_opencode(self, monkeypatch):
+        from llm_api_proxy_recorder.terminal.manager import _build_env
+
+        monkeypatch.delenv("OPENCODE_CONFIG_CONTENT", raising=False)
+        monkeypatch.delenv("OPENCODE_DISABLE_MODELS_FETCH", raising=False)
+        cfg = AppConfig(
+            upstreams=[UpstreamConfig(name="private", base_url="http://127.0.0.1:9001", models=[
+                UpstreamModelConfig(id="text-only"),
+                UpstreamModelConfig(id="vision", input_modalities=["image", "pdf"]),
+            ])],
+            default_upstream="private",
+        )
+        env = _build_env(cfg, "opencode")
+        provider = json.loads(env["OPENCODE_CONFIG_CONTENT"])["provider"]["private"]
+        assert env["OPENCODE_DISABLE_MODELS_FETCH"] == "1"
+        assert provider["npm"] == "@ai-sdk/openai-compatible"
+        assert provider["models"]["text-only"]["attachment"] is False
+        assert provider["models"]["vision"]["attachment"] is True
+        assert provider["models"]["vision"]["modalities"] == {
+            "input": ["text", "image", "pdf"], "output": ["text"],
+        }
+        assert "OPENCODE_DISABLE_MODELS_FETCH" not in _build_env(cfg, "shell")
+        cfg.terminal.route_through_proxy = False
+        assert "OPENCODE_CONFIG_CONTENT" not in _build_env(cfg, "opencode")
 
 
 # ------------------------------------------------------------------ REST + WS

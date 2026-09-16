@@ -95,6 +95,36 @@ function renderSettings(view) {
       const extraTa = el("textarea", { rows: "2", class: "mono", placeholder: "extra_headers，每行一条：Header=Value" });
       extraTa.value = u._extraText || "";
       extraTa.addEventListener("input", () => { u._extraText = extraTa.value; });
+      u.models = u.models || [];
+      const modelsBox = el("div", { class: "model-list" });
+      const modalityLabels = [["image", "图片"], ["audio", "音频"], ["video", "视频"], ["pdf", "PDF"]];
+      function renderModels() {
+        modelsBox.replaceChildren(...u.models.map((model) => {
+          const idIn = el("input", { type: "text", value: model.id || "", class: "mono", placeholder: "模型 ID，如 deepseek-chat" });
+          idIn.addEventListener("input", () => { model.id = idIn.value.trim(); });
+          const caps = el("div", { class: "model-capabilities" },
+            ...modalityLabels.map(([value, label]) => {
+              const check = el("input", { type: "checkbox", checked: (model.input_modalities || []).includes(value) });
+              check.addEventListener("change", () => {
+                const selected = new Set(model.input_modalities || []);
+                if (check.checked) selected.add(value);
+                else selected.delete(value);
+                model.input_modalities = modalityLabels.map(([id]) => id).filter((id) => selected.has(id));
+              });
+              return el("label", { class: "model-toggle" }, check, label);
+            }));
+          const remove = el("button", { type: "button", class: "btn btn-xs btn-danger", text: "移除", onclick: () => {
+            u.models.splice(u.models.indexOf(model), 1);
+            renderModels();
+          } });
+          return el("div", { class: "model-row" }, idIn, caps, remove);
+        }));
+      }
+      renderModels();
+      const addModel = el("button", { type: "button", class: "btn btn-xs", text: "+ 添加模型", onclick: () => {
+        u.models.push({ id: "", input_modalities: [] });
+        renderModels();
+      } });
 
       const radio = el("input", { type: "radio", name: "up-default", checked: u.name === defaultUp });
       radio.addEventListener("change", () => {
@@ -140,13 +170,15 @@ function renderSettings(view) {
           delBtn),
         field("base_url", urlIn),
         field("api_key", el("span", { class: "inline-controls" }, keyIn, eye)),
+        field("OpenCode 手动模型", el("div", null, modelsBox, addModel),
+          "模型 ID 要与上游接受的 model 值一致，无需写提供商前缀。勾选输入能力后，OpenCode 才允许使用对应文件。新建的代理模式会话会加入这些模型并停止在线更新目录；已有缓存中的模型仍可能显示。适用于 OpenAI 兼容接口。"),
         field("extra_headers", extraTa),
         el("div", { class: "up-actions" }, testBtn, testRes));
     }
 
     renderUps();
     const addBtn = el("button", { class: "btn", type: "button", text: "+ 添加上游", onclick: () => {
-      ups.push({ name: "", base_url: "https://", api_key: "", extra_headers: {}, key_strategy: "replace", _extraText: "" });
+      ups.push({ name: "", base_url: "https://", api_key: "", models: [], extra_headers: {}, key_strategy: "replace", _extraText: "" });
       renderUps();
     } });
 
@@ -230,6 +262,50 @@ function renderSettings(view) {
         el("div", { class: "field" }, el("label", { class: "f-label", text: "OpenCode provider ID" }), providerIn,
           el("div", { class: "f-hint", text: "对应 OpenCode 配置中的 provider 名称；留空时与所选上游同名" })),
         el("div", { class: "field full" }, el("label", { class: "f-label", text: "注入环境变量 inject_env" }), envTa))));
+
+    /* ---------------- OpenCode 全局 JSONC 配置 */
+    const configPath = el("div", { class: "empty-hint", text: "正在读取配置文件…" });
+    const configEditor = el("textarea", { class: "mono opencode-editor", rows: "16", spellcheck: "false", disabled: true });
+    const configMessage = el("div", { class: "empty-hint" });
+    let configRevision = null;
+    const reloadConfig = el("button", { type: "button", class: "btn", text: "重新读取", onclick: loadOpenCodeConfig });
+    const saveConfig = el("button", { type: "button", class: "btn btn-primary", text: "保存 OpenCode 配置", disabled: true, onclick: async () => {
+      saveConfig.disabled = true;
+      configMessage.textContent = "保存中…";
+      try {
+        const result = await api("settings/opencode-config", {
+          method: "PUT", body: { content: configEditor.value, revision: configRevision }, silent: true,
+        });
+        configRevision = result.revision;
+        configMessage.textContent = "已保存；新建 OpenCode 会话时读取";
+        toast("OpenCode 配置已保存", "ok");
+      } catch (e) {
+        configMessage.textContent = "保存失败：" + (e.detail ? format422(e.detail) : e.message);
+      }
+      saveConfig.disabled = false;
+    } });
+    async function loadOpenCodeConfig() {
+      reloadConfig.disabled = true;
+      try {
+        const result = await api("settings/opencode-config", { silent: true });
+        configPath.textContent = "当前文件：" + result.path;
+        configEditor.value = result.content;
+        configEditor.disabled = false;
+        configRevision = result.revision;
+        saveConfig.disabled = false;
+        configMessage.textContent = "支持 JSONC 注释和末尾逗号；保存时保留原有格式，仅检查语法";
+      } catch (e) {
+        configMessage.textContent = "读取失败：" + e.message;
+      }
+      reloadConfig.disabled = false;
+    }
+    view.append(el("section", { class: "card" },
+      el("h2", { text: "OpenCode 全局配置" }),
+      configPath,
+      el("div", { class: "empty-hint", text: "直接编辑 OpenCode 的 opencode.json / opencode.jsonc。代理模式会临时覆盖所选 provider 的接口地址及手动模型的输入能力；其余设置仍会合并生效。" }),
+      configEditor,
+      el("div", { class: "up-actions" }, reloadConfig, saveConfig), configMessage));
+    loadOpenCodeConfig();
 
     /* ---------------- 数据清理 */
     function fmtBytes(b) {
@@ -354,6 +430,10 @@ function renderSettings(view) {
           name: u.name,
           base_url: u.base_url,
           api_key: u.api_key || "",
+          models: (u.models || []).filter((model) => model.id).map((model) => ({
+            id: model.id,
+            input_modalities: model.input_modalities || [],
+          })),
           extra_headers: parseExtra(u._extraText),
           key_strategy: u.key_strategy || "replace",
         })),

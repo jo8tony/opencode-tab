@@ -9,6 +9,7 @@ from llm_api_proxy_recorder.config import (
     RecordingConfig,
     ServerConfig,
     UpstreamConfig,
+    UpstreamModelConfig,
     default_config,
     load_config,
     resolved_records_dir,
@@ -28,6 +29,7 @@ def test_default_config_values(tmp_path):
     assert cfg.outbound.proxy_url == ""
     assert cfg.upstreams[0].key_strategy == "keep"  # 默认透明透传凭据头
     assert cfg.upstreams[0].api_key == ""
+    assert cfg.upstreams[0].models == []
     assert cfg.recording.redact is True
     assert cfg.recording.redact_headers == ["authorization", "x-api-key", "api-key", "cookie"]
     assert cfg.recording.max_capture_mb == 20
@@ -57,6 +59,7 @@ def test_save_load_roundtrip_with_chinese_path(tmp_path):
                 name="main",
                 base_url="http://127.0.0.1:9001",
                 api_key="sk-test",
+                models=[UpstreamModelConfig(id="vision-local", input_modalities=["image", "pdf"])],
                 extra_headers={"X-Org": "组织1"},
             ),
             UpstreamConfig(name="second", base_url="https://api.example.com", key_strategy="keep"),
@@ -93,6 +96,18 @@ def test_invalid_default_upstream_not_found():
             upstreams=[UpstreamConfig(name="a", base_url="http://x.example.com")],
             default_upstream="nope",
         )
+
+
+def test_model_ids_and_modalities_validation():
+    model = UpstreamModelConfig(id="  local-vision  ", input_modalities=["image", "image", "pdf"])
+    assert model.id == "local-vision"
+    assert model.input_modalities == ["image", "pdf"]
+    with pytest.raises(ValidationError):
+        UpstreamModelConfig(id="bad model")
+    with pytest.raises(ValidationError):
+        UpstreamModelConfig(id="ok", input_modalities=["unknown"])
+    with pytest.raises(ValidationError):
+        UpstreamConfig(name="a", base_url="https://example.com", models=[model, model])
 
 
 @pytest.mark.parametrize("base_url", ["ftp://x.example.com", "example.com", ""])

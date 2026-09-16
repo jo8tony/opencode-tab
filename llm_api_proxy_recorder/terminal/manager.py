@@ -157,8 +157,27 @@ def _build_env(cfg: AppConfig, kind: str) -> dict[str, str]:
             options = {}
             entry["options"] = options
         options["baseURL"] = base
-        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(inline, ensure_ascii=False)
         up = next((u for u in cfg.upstreams if u.name == upstream_name), None)
+        if up is not None and up.models:
+            # 没有在线模型目录时也可从配置创建 provider 和模型。
+            # 当前手动模型按 OpenAI 兼容的 /chat/completions 接口调用。
+            entry.setdefault("npm", "@ai-sdk/openai-compatible")
+            models = entry.setdefault("models", {})
+            if not isinstance(models, dict):
+                models = {}
+                entry["models"] = models
+            for model in up.models:
+                model_entry = models.setdefault(model.id, {})
+                if not isinstance(model_entry, dict):
+                    model_entry = {}
+                    models[model.id] = model_entry
+                model_entry.setdefault("name", model.id)
+                model_entry["attachment"] = bool(model.input_modalities)
+                model_entry["modalities"] = {
+                    "input": ["text", *model.input_modalities], "output": ["text"]
+                }
+            env["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(inline, ensure_ascii=False)
         if up is not None and up.key_strategy == "replace":
             # 代理侧会注入真实 key，这里给占位值让 opencode 的 provider 校验通过
             env.setdefault("OPENAI_API_KEY", PLACEHOLDER_KEY)
