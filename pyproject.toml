@@ -21,6 +21,9 @@ dev = [
     "pytest",
     "pytest-asyncio",
 ]
+desktop = [
+    "pyinstaller>=6.0",
+]
 socks = ["httpx[socks]"]
 
 [project.scripts]
@@ -29,6 +32,12 @@ llm-api-proxy-recorder = "llm_api_proxy_recorder.cli:main"
 [tool.setuptools.packages.find]
 include = ["llm_api_proxy_recorder*"]
 exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+llm_api_proxy_recorder = [
+    "web/static/*",
+    "web/static/vendor/*",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

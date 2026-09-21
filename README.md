@@ -210,6 +210,41 @@ records/
 
 覆盖：代理转发、SSE 解析、录制/索引、轨迹聚合、数据清理、终端会话与项目持久化等。
 
+## macOS 桌面版
+
+桌面版使用 Tauri 2 作为原生窗口，现有 FastAPI 服务通过 PyInstaller sidecar 随应用分发。当前构建脚本支持 Apple Silicon 与 Intel macOS；产物只能在对应架构的 Mac 上运行。
+
+首次准备构建环境：
+
+```bash
+python3.12 -m venv .venv-build
+.venv-build/bin/python -m pip install -U pip setuptools wheel
+.venv-build/bin/python -m pip install -e ".[dev,desktop]"
+npm install
+```
+
+生成 sidecar、`.app` 和 `.dmg`：
+
+```bash
+npm run desktop:build
+```
+
+构建产物位于 `src-tauri/target/release/bundle/`。默认使用 ad-hoc 签名，适合本机测试；公开分发时应在 `src-tauri/tauri.conf.json` 中换用 Developer ID Application 身份，并完成 Apple notarization。
+
+### Windows 安装包
+
+推送到 `main` 分支会触发 `.github/workflows/build-windows.yml`：在 Windows x64 环境运行测试、构建 PyInstaller sidecar、生成 Tauri NSIS 安装程序，并上传名为 `llm-proxy-recorder-windows-x64` 的 GitHub Actions artifact。
+
+Windows 本机也可执行：
+
+```powershell
+python -m venv .venv-build
+.venv-build\Scripts\python -m pip install -U pip setuptools wheel
+.venv-build\Scripts\python -m pip install -e ".[dev,desktop]"
+npm install
+npm run desktop:build:windows
+```
+
 ## 目录结构
 
 ```

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LLM Proxy Recorder",
+  "version": "0.1.0",
+  "identifier": "com.liaopeng.llm-proxy-recorder",
+  "build": {
+    "frontendDist": "../desktop"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "externalBin": [
+      "binaries/llm-api-proxy-recorder-sidecar"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "本地大模型 API 代理记录器",
+    "longDescription": "透明转发并记录 LLM API 请求和响应，提供轨迹分析与本地终端。",
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "signingIdentity": "-",
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.plist"
+    }
+  }
+}
