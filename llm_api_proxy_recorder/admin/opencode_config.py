@@ -90,7 +90,10 @@ def write_global_config(path: Path, content: str) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp = tempfile.mkstemp(prefix=".opencode-", suffix=".tmp", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        # newline="" keeps the editor payload byte-for-byte identical on Windows.
+        # Otherwise TextIOWrapper rewrites LF to CRLF, while the returned revision
+        # is calculated from the original LF content and becomes stale immediately.
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
             stream.write(content)
         os.replace(temp, path)
     finally:

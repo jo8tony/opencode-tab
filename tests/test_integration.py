@@ -218,6 +218,27 @@ def _wait_for_records(records_dir: Path, min_count: int, timeout: float = 10.0) 
     return rows
 
 
+def _wait_for_new_record(
+    records_dir: Path,
+    previous_ids: set[str],
+    *,
+    path: str,
+    timeout: float = 10.0,
+) -> dict:
+    """Wait for this request's record even when older background finalizers finish later."""
+    deadline = time.time() + timeout
+    while True:
+        candidates = [
+            row for row in _index_rows(records_dir)
+            if row.get("id") not in previous_ids and row.get("path") == path
+        ]
+        if candidates:
+            return candidates[-1]
+        if time.time() >= deadline:
+            raise AssertionError(f"等待新记录超时: path={path}")
+        time.sleep(0.05)
+
+
 def _latest_rec(records_dir: Path) -> dict:
     rows = _wait_for_records(records_dir, 1)
     assert rows, "索引为空"
@@ -433,7 +454,7 @@ async def test_request_body_and_query_passthrough(stack):
 # ==================================================== 7. 脱敏落盘
 async def test_redact_keys_not_persisted(stack):
     client_key = "sk-client-secret-abcdef"
-    before = len(_index_rows(stack["records_dir"]))
+    previous_ids = {row["id"] for row in _index_rows(stack["records_dir"])}
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
             f"{stack['proxy']}/v1/chat/completions", json=_chat_payload(),
@@ -441,8 +462,10 @@ async def test_redact_keys_not_persisted(stack):
         )
     assert r.status_code == 200
 
-    rows = _wait_for_records(stack["records_dir"], before + 1)
-    cid = rows[-1]["id"]
+    row = _wait_for_new_record(
+        stack["records_dir"], previous_ids, path="/v1/chat/completions"
+    )
+    cid = row["id"]
     raw_text = (stack["records_dir"] / "calls"
                 / f"{cid[1:5]}-{cid[5:7]}-{cid[7:9]}" / f"{cid}.json").read_text(encoding="utf-8")
     assert client_key not in raw_text  # 客户端 key 不落盘

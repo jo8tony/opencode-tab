@@ -16,11 +16,11 @@ def test_opencode_jsonc_editor_preserves_comments_and_checks_revision(tmp_path, 
         content = '{\n  // 保留说明\n  "$schema": "https://opencode.ai/config.json",\n  "model": "deepseek/test",\n}\n'
         saved = client.put(url, json={"content": content, "revision": original["revision"]})
         assert saved.status_code == 200, saved.text
-        assert (tmp_path / "xdg/opencode/opencode.jsonc").read_text() == content
+        assert (tmp_path / "xdg/opencode/opencode.jsonc").read_text(encoding="utf-8") == content
         assert client.get(url).json()["content"] == content
 
         outdated = client.put(url, json={"content": "{}", "revision": original["revision"]})
         assert outdated.status_code == 409
         invalid = client.put(url, json={"content": '{"x":,}', "revision": saved.json()["revision"]})
         assert invalid.status_code == 422
-        assert (tmp_path / "xdg/opencode/opencode.jsonc").read_text() == content
+        assert (tmp_path / "xdg/opencode/opencode.jsonc").read_text(encoding="utf-8") == content
