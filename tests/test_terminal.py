@@ -157,11 +157,35 @@ class TestResolve:
         import subprocess
         import llm_api_proxy_recorder.terminal.manager as manager
 
+        manager._version_cache.clear()
+
         def timeout(*args, **kwargs):
             raise subprocess.TimeoutExpired("opencode", 0.01)
 
         monkeypatch.setattr(manager.subprocess, "run", timeout)
         assert manager.executable_version("opencode", timeout=0.01) is None
+
+    def test_version_probe_is_cached_and_hidden_on_windows(self, monkeypatch):
+        import llm_api_proxy_recorder.terminal.manager as manager
+
+        manager._version_cache.clear()
+        calls = []
+
+        class Result:
+            returncode = 0
+            stdout = "1.18.32\n"
+            stderr = ""
+
+        def run(*args, **kwargs):
+            calls.append((args, kwargs))
+            return Result()
+
+        monkeypatch.setattr(manager.sys, "platform", "win32")
+        monkeypatch.setattr(manager.subprocess, "run", run)
+        assert manager.executable_version(r"C:\Program Files\OpenCode\opencode.exe") == "1.18.32"
+        assert manager.executable_version(r"C:\Program Files\OpenCode\opencode.exe") == "1.18.32"
+        assert len(calls) == 1
+        assert calls[0][1]["creationflags"] == 0x08000000
 
     def test_manual_models_and_image_support_in_offline_opencode(self, monkeypatch):
         from llm_api_proxy_recorder.terminal.manager import _build_env
@@ -310,6 +334,19 @@ class TestWebSocket:
         assert ws.messages == [
             ("text", "attached"), ("bytes", b"previous"), ("bytes", b"next")
         ]
+
+    async def test_input_write_failure_is_reported_without_raising(self):
+        from llm_api_proxy_recorder.terminal.manager import TerminalManager, TerminalSession
+
+        class BrokenProcess:
+            def write(self, _text):
+                raise OSError("pty input pipe closed")
+
+        session = TerminalSession(
+            "id", "opencode", "/tmp", "tmp", "now", BrokenProcess(), 1024
+        )
+        error = await TerminalManager().write(session, "hello")
+        assert error == "终端输入写入失败，请重新启动会话"
 
 
 class TestFsApi:

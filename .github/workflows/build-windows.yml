@@ -71,12 +71,18 @@ jobs:
           if ($Process.ExitCode -ne 0) { throw "Silent install failed: $($Process.ExitCode)" }
           $OpenCode = Get-ChildItem $InstallDir -Recurse -File -Filter "opencode.exe" | Select-Object -First 1
           $Recorder = Get-ChildItem $InstallDir -Recurse -File -Filter "llm-api-proxy-recorder-sidecar.exe" | Select-Object -First 1
+          $Desktop = Get-ChildItem $InstallDir -Recurse -File -Filter "LLM Proxy Recorder.exe" | Select-Object -First 1
           $License = Get-ChildItem $InstallDir -Recurse -File -Filter "OpenCode-LICENSE.txt" | Select-Object -First 1
           if (-not $OpenCode) { throw "Installed opencode.exe not found" }
           if (-not $Recorder) { throw "Installed recorder sidecar not found" }
+          if (-not $Desktop) { throw "Installed desktop executable not found" }
           if (-not $License) { throw "Installed OpenCode license not found" }
           & $OpenCode.FullName --version
           if ($LASTEXITCODE -ne 0) { throw "Installed OpenCode smoke test failed" }
+          python ./scripts/smoke-windows-package.py `
+            --desktop $Desktop.FullName `
+            --recorder $Recorder.FullName `
+            --opencode $OpenCode.FullName
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4

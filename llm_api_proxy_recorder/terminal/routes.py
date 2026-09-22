@@ -158,6 +158,14 @@ def terminal_check(request: Request) -> dict:
     git_bash_path = detect_git_bash()
     bundled_path = os.environ.get(BUNDLED_OPENCODE_ENV, "") if sys.platform == "win32" else ""
     bundled_path = bundled_path if bundled_path and Path(bundled_path).is_file() else ""
+    opencode_version = executable_version(opencode_path)
+    bundled_version = (
+        opencode_version
+        if bundled_path
+        and opencode_path
+        and os.path.normcase(bundled_path) == os.path.normcase(opencode_path)
+        else executable_version(bundled_path)
+    )
     shell_cmd = t.shell_command or detect_shell()
     shell_path = resolve_executable(shell_cmd)
     return {
@@ -165,8 +173,8 @@ def terminal_check(request: Request) -> dict:
         "opencode_path": opencode_path,
         "opencode_command": t.command,
         "opencode_source": resolution.source,
-        "opencode_version": executable_version(opencode_path),
-        "bundled_version": executable_version(bundled_path),
+        "opencode_version": opencode_version,
+        "bundled_version": bundled_version,
         "git_bash_path": git_bash_path,
         "compatibility_warning": (
             "未检测到 Git Bash；OpenCode 在 Windows 上仍可启动，"
@@ -203,7 +211,11 @@ async def terminal_ws(websocket: WebSocket, session_id: str):
                 continue
             mtype = data.get("type")
             if mtype == "input":
-                await manager.write(session, str(data.get("data") or ""))
+                error = await manager.write(session, str(data.get("data") or ""))
+                if error:
+                    await websocket.send_text(
+                        json.dumps({"type": "input_error", "detail": error})
+                    )
             elif mtype == "resize":
                 try:
                     cols = int(data.get("cols") or 80)

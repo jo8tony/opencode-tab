@@ -28,6 +28,9 @@ from llm_api_proxy_recorder.config import AppConfig
 
 logger = logging.getLogger("llm_api_proxy_recorder")
 
+_VERSION_CACHE_TTL_SECONDS = 30.0
+_version_cache: dict[tuple[str, float], tuple[float, str | None]] = {}
+
 if sys.platform == "win32":
     try:
         from winpty import PtyProcess  # type: ignore[import-not-found]
@@ -70,6 +73,7 @@ class TerminalSession:
     buf_size: int = 0
     pump_task: asyncio.Task | None = None
     output_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    input_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def append_buffer(self, raw: bytes) -> None:
         if self.max_buffer <= 0:
@@ -152,6 +156,16 @@ def executable_version(executable: str | None, timeout: float = 3.0) -> str | No
     """快速探测 OpenCode 版本；任何启动或超时失败均返回 None。"""
     if not executable:
         return None
+    cache_key = (os.path.normcase(os.path.abspath(executable)), timeout)
+    cached = _version_cache.get(cache_key)
+    now = time.monotonic()
+    if cached is not None and now - cached[0] < _VERSION_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    run_kwargs: dict[str, object] = {}
+    if sys.platform == "win32":
+        # 桌面应用没有父控制台；版本探测若不显式隐藏窗口，会短暂弹出 cmd 窗口。
+        run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     try:
         result = subprocess.run(
             _build_argv(executable, ["--version"]),
@@ -159,11 +173,15 @@ def executable_version(executable: str | None, timeout: float = 3.0) -> str | No
             check=False,
             text=True,
             timeout=timeout,
+            **run_kwargs,
         )
     except (OSError, subprocess.SubprocessError):
+        _version_cache[cache_key] = (now, None)
         return None
     output = (result.stdout or result.stderr).strip()
-    return output.splitlines()[0].strip() if result.returncode == 0 and output else None
+    version = output.splitlines()[0].strip() if result.returncode == 0 and output else None
+    _version_cache[cache_key] = (now, version)
+    return version
 
 
 def detect_git_bash() -> str | None:
@@ -402,11 +420,25 @@ class TerminalManager:
     def detach(self, websocket: WebSocket, session: TerminalSession) -> None:
         session.clients.discard(websocket)
 
-    async def write(self, session: TerminalSession, text: str) -> None:
+    async def write(self, session: TerminalSession, text: str) -> str | None:
+        """按顺序写入 PTY；失败时返回可安全展示给前端的错误。"""
+        if not text:
+            return None
+        if not session.alive:
+            return "终端进程已经退出"
         try:
-            await asyncio.to_thread(session.proc.write, text)
-        except (EOFError, OSError, ValueError):
-            pass  # 进程已退出，忽略写入
+            # 多个浏览器连接可能同时操作同一会话，锁保证按键顺序不会交错。
+            async with session.input_lock:
+                await asyncio.to_thread(session.proc.write, text)
+            return None
+        except Exception:
+            logger.warning(
+                "终端会话 %s 写入失败（字符数=%s）",
+                session.id,
+                len(text),
+                exc_info=True,
+            )
+            return "终端输入写入失败，请重新启动会话"
 
     def resize(self, session: TerminalSession, cols: int, rows: int) -> None:
         try:

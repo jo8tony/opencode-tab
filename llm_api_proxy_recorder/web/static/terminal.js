@@ -162,7 +162,16 @@ async function toggleTerminalFullscreen() {
 
 /* ============================================================ 会话管理 */
 function addSession(info, { focus }) {
-  const s = Object.assign({}, info, { ws: null, wsState: "closed", reconnectTimer: null, attempts: 0, hasConnected: false });
+  const s = Object.assign({}, info, {
+    ws: null,
+    wsState: "closed",
+    wsAttached: false,
+    pendingInput: "",
+    inputErrorShown: false,
+    reconnectTimer: null,
+    attempts: 0,
+    hasConnected: false,
+  });
 
   s.overlayEl = el("div", { class: "term-overlay hidden" });
   s.boxEl = el("div", { class: "term-box" }, s.overlayEl);
@@ -191,6 +200,9 @@ function addSession(info, { focus }) {
   TERM.area.append(s.boxEl);
   s.term.open(s.boxEl);
   s.term.onData((d) => sendInput(s, d));
+  s.boxEl.addEventListener("pointerdown", () => {
+    if (s.alive && TERM && TERM.activeId === s.id) requestAnimationFrame(() => s.term.focus());
+  });
   if (focus) activate(s.id);
 }
 
@@ -244,8 +256,19 @@ function connect(s) {
       try { msg = JSON.parse(ev.data); } catch (_) { return; }
       if (msg.type === "attached") {
         // 每次连接都从服务器回放缓冲重新建立画面；清掉旧画面，避免重连重复叠字。
+        s.alive = msg.alive !== false;
+        s.wsAttached = s.alive;
+        s.inputErrorShown = false;
         s.term.reset();
-        if (TERM && TERM.activeId === s.id) sendResize(s);
+        if (s.alive) flushPendingInput(s);
+        if (s.alive && TERM && TERM.activeId === s.id) {
+          sendResize(s);
+          requestAnimationFrame(() => s.term.focus());
+        }
+      }
+      if (msg.type === "input_error" && !s.inputErrorShown) {
+        s.inputErrorShown = true;
+        toast(msg.detail || "终端输入写入失败，请重新启动会话", "error");
       }
       if (msg.type === "exit") markExited(s, msg.code);
     } else {
@@ -255,6 +278,7 @@ function connect(s) {
   ws.onclose = () => {
     s.ws = null;
     s.wsState = "closed";
+    s.wsAttached = false;
     if (s.alive) scheduleReconnect(s);
     refreshAll();
   };
@@ -272,6 +296,7 @@ function scheduleReconnect(s) {
 }
 
 function closeWs(s) {
+  s.wsAttached = false;
   if (s.ws) {
     s.ws.onclose = null;
     s.ws.onerror = null;
@@ -282,7 +307,20 @@ function closeWs(s) {
 }
 
 function sendInput(s, data) {
-  if (s.ws && s.ws.readyState === 1) s.ws.send(JSON.stringify({ type: "input", data }));
+  if (!data || !s.alive) return;
+  if (s.ws && s.ws.readyState === 1 && s.wsAttached) {
+    s.ws.send(JSON.stringify({ type: "input", data }));
+    return;
+  }
+  // xterm 会在 WebSocket 完成 attached 握手前获得焦点；缓存这段时间的按键，避免静默丢失。
+  s.pendingInput = (s.pendingInput + data).slice(-65536);
+}
+
+function flushPendingInput(s) {
+  if (!s.pendingInput || !s.ws || s.ws.readyState !== 1 || !s.wsAttached) return;
+  const data = s.pendingInput;
+  s.pendingInput = "";
+  s.ws.send(JSON.stringify({ type: "input", data }));
 }
 
 function sendResize(s) {
@@ -296,11 +334,17 @@ function markExited(s, code) {
   s.overlayEl.classList.remove("hidden");
   s.overlayEl.replaceChildren(
     el("div", { class: "term-overlay-card" },
-      el("div", { class: "term-overlay-title", text: "进程已退出" + (code != null ? "（code " + code + "）" : "") }),
+      el("div", { class: "term-overlay-title", text: "进程已退出" + (code != null ? "（code " + formatExitCode(code) + "）" : "") }),
       el("div", { class: "term-overlay-actions" },
         el("button", { class: "btn btn-xs", type: "button", text: "重新启动", onclick: () => restartSession(s) }),
         el("button", { class: "btn btn-xs btn-danger", type: "button", text: "关闭", onclick: () => closeSession(s.id) }))));
   refreshAll();
+}
+
+function formatExitCode(code) {
+  const numeric = Number(code);
+  if (!Number.isInteger(numeric) || numeric < 0x80000000) return String(code);
+  return `${numeric} / 0x${(numeric >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
 }
 
 /* ============================================================ tab / 侧栏 */
