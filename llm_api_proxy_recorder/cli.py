@@ -1,11 +1,26 @@
 """CLI 入口：加载配置 → 应用覆盖 → 启动 uvicorn。"""
 
 import argparse
+import sys
 
 import uvicorn
 
 from llm_api_proxy_recorder.app import create_app
 from llm_api_proxy_recorder.config import CONFIG_PATH, load_config, resolved_records_dir
+
+
+def _harden_stdio() -> None:
+    """Windows 英文 locale 下管道 stdout/stderr 使用 cp1252，中文输出会抛 UnicodeEncodeError。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        if encoding != "utf8":
+            try:
+                reconfigure(errors="replace")
+            except (ValueError, OSError):
+                pass
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -22,6 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    _harden_stdio()
     args = build_parser().parse_args(argv)
 
     cfg = load_config(args.config)
