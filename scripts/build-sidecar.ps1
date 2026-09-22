@@ -36,3 +36,8 @@ $Source = Join-Path $OutputDir "dist\$BinaryName.exe"
 $Destination = Join-Path $BinaryDir "$BinaryName-$TargetTriple.exe"
 Copy-Item -Force $Source $Destination
 Write-Host "sidecar: $Destination"
+
+& (Join-Path $PSScriptRoot "prepare-opencode.ps1")
+if ($LASTEXITCODE -ne 0) {
+    throw "Preparing bundled OpenCode failed with exit code $LASTEXITCODE"
+}

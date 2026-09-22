@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import time
 import uuid
@@ -39,6 +40,9 @@ else:
 
 # 会话占位 API key：仅上游 key_strategy=replace 时注入（代理侧会替换真实 key）
 PLACEHOLDER_KEY = "proxy-managed"
+BUNDLED_OPENCODE_ENV = "LLMPR_BUNDLED_OPENCODE"
+ORIGINAL_XDG_PREFIX = "LLMPR_ORIGINAL_"
+XDG_KEYS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME")
 
 
 class TerminalError(Exception):
@@ -120,12 +124,106 @@ def _build_argv(exe: str, args: list[str]) -> list[str]:
     return [exe, *args]
 
 
+@dataclass(frozen=True)
+class OpenCodeResolution:
+    path: str | None
+    source: str  # "bundled" | "path" | "custom" | "missing"
+
+
+def resolve_opencode(cfg: AppConfig) -> OpenCodeResolution:
+    """按配置解析 OpenCode：自定义模式不回退，自动模式优先 Windows 随包版。"""
+    terminal = cfg.terminal
+    if terminal.command_mode == "custom":
+        path = resolve_executable(terminal.command)
+        return OpenCodeResolution(path, "custom" if path else "missing")
+
+    if sys.platform == "win32":
+        bundled = os.environ.get(BUNDLED_OPENCODE_ENV, "").strip()
+        if bundled:
+            path = Path(bundled)
+            if path.is_file():
+                return OpenCodeResolution(str(path), "bundled")
+
+    path = resolve_executable("opencode")
+    return OpenCodeResolution(path, "path" if path else "missing")
+
+
+def executable_version(executable: str | None, timeout: float = 3.0) -> str | None:
+    """快速探测 OpenCode 版本；任何启动或超时失败均返回 None。"""
+    if not executable:
+        return None
+    try:
+        result = subprocess.run(
+            _build_argv(executable, ["--version"]),
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = (result.stdout or result.stderr).strip()
+    return output.splitlines()[0].strip() if result.returncode == 0 and output else None
+
+
+def detect_git_bash() -> str | None:
+    """检测 Git for Windows 的 bash，不把 System32/WSL bash 误认为 Git Bash。"""
+    configured = os.environ.get("OPENCODE_GIT_BASH_PATH", "").strip()
+    if configured and Path(configured).is_file():
+        return configured
+    if sys.platform != "win32":
+        return None
+
+    candidates: list[Path] = []
+    for root_name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        root = os.environ.get(root_name)
+        if not root:
+            continue
+        base = Path(root)
+        if root_name == "LOCALAPPDATA":
+            candidates.append(base / "Programs" / "Git" / "bin" / "bash.exe")
+        else:
+            candidates.extend(
+                (
+                    base / "Git" / "bin" / "bash.exe",
+                    base / "Git" / "usr" / "bin" / "bash.exe",
+                )
+            )
+
+    git = shutil.which("git.exe") or shutil.which("git")
+    if git:
+        git_path = Path(git)
+        # Git/cmd/git.exe -> Git/bin/bash.exe
+        candidates.append(git_path.parent.parent / "bin" / "bash.exe")
+        candidates.append(git_path.parent.parent / "usr" / "bin" / "bash.exe")
+    return next((str(path) for path in candidates if path.is_file()), None)
+
+
+def _restore_user_xdg(env: dict[str, str]) -> None:
+    """通用 shell 会话恢复桌面应用启动前的 XDG 环境，避免遭受 OpenCode 隔离目录影响。"""
+    for key in XDG_KEYS:
+        original = os.environ.get(f"{ORIGINAL_XDG_PREFIX}{key}", "")
+        if original:
+            env[key] = original
+        else:
+            env.pop(key, None)
+
+
 def _build_env(cfg: AppConfig, kind: str) -> dict[str, str]:
     """进程环境：终端变量、OpenCode 临时 provider 配置、用户覆盖。"""
     env = dict(os.environ)
     env["TERM"] = "xterm-256color"
     env["COLORTERM"] = "truecolor"
     t = cfg.terminal
+    if kind == "shell":
+        _restore_user_xdg(env)
+    if kind == "opencode":
+        env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
+        git_bash = detect_git_bash()
+        if git_bash:
+            env["OPENCODE_GIT_BASH_PATH"] = git_bash
+        else:
+            env.pop("OPENCODE_GIT_BASH_PATH", None)
     if kind == "opencode" and t.route_through_proxy:
         base = f"http://127.0.0.1:{cfg.server.port}"
         if t.proxy_upstream:
@@ -182,7 +280,13 @@ def _build_env(cfg: AppConfig, kind: str) -> dict[str, str]:
             # 代理侧会注入真实 key，这里给占位值让 opencode 的 provider 校验通过
             env.setdefault("OPENAI_API_KEY", PLACEHOLDER_KEY)
             env.setdefault("ANTHROPIC_API_KEY", PLACEHOLDER_KEY)
-    env.update(t.inject_env)  # 用户配置优先级最高
+    env.update(t.inject_env)  # 用户配置可覆盖代理与目录注入
+    if kind == "opencode":
+        # 随应用发布的 OpenCode 必须由应用升级，禁止子进程自行替换版本。
+        env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
+    for key in list(env):
+        if key == BUNDLED_OPENCODE_ENV or key.startswith(ORIGINAL_XDG_PREFIX):
+            env.pop(key, None)
     return env
 
 
@@ -210,7 +314,12 @@ class TerminalManager:
             raise TerminalError(f"目录不存在或不是文件夹：{path}")
 
         if kind == "opencode":
-            command, args = t.command, list(t.args)
+            resolution = resolve_opencode(cfg)
+            if resolution.path is None:
+                if t.command_mode == "custom":
+                    raise TerminalError(f"未找到自定义 OpenCode 命令：{t.command}")
+                raise TerminalError("未找到随包或 PATH 中的 OpenCode 可执行程序")
+            command, args = resolution.path, list(t.args)
         elif kind == "shell":
             command, args = t.shell_command or detect_shell(), []
         else:

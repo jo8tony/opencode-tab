@@ -1,0 +1,12 @@
+{
+  "version": "1.18.32",
+  "repository": "https://github.com/anomalyco/opencode",
+  "license": "MIT",
+  "assets": {
+    "windows_x64": {
+      "name": "opencode-windows-x64-baseline.zip",
+      "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.32/opencode-windows-x64-baseline.zip",
+      "sha256": "cd852831bd094c2df2eb379eb98bed7a63db7f823a7caf277c732cdac33cbdb6"
+    }
+  }
+}

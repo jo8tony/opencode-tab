@@ -8,6 +8,7 @@ from llm_api_proxy_recorder.config import (
     OutboundConfig,
     RecordingConfig,
     ServerConfig,
+    TerminalConfig,
     UpstreamConfig,
     UpstreamModelConfig,
     default_config,
@@ -33,6 +34,7 @@ def test_default_config_values(tmp_path):
     assert cfg.recording.redact is True
     assert cfg.recording.redact_headers == ["authorization", "x-api-key", "api-key", "cookie"]
     assert cfg.recording.max_capture_mb == 20
+    assert cfg.terminal.command_mode == "auto"
     assert resolved_records_dir(cfg) != cfg.recording.dir  # 已展开 ~
 
 
@@ -138,3 +140,15 @@ def test_valid_proxy_url(proxy_url):
 
 def test_empty_proxy_url_valid():
     assert OutboundConfig().proxy_url == ""
+
+
+def test_terminal_command_mode_migrates_old_config():
+    assert TerminalConfig.model_validate({"command": "opencode"}).command_mode == "auto"
+    migrated = TerminalConfig.model_validate({"command": r"C:\tools\opencode.exe"})
+    assert migrated.command_mode == "custom"
+    assert migrated.command == r"C:\tools\opencode.exe"
+
+
+def test_terminal_custom_command_cannot_be_empty():
+    with pytest.raises(ValidationError):
+        TerminalConfig(command_mode="custom", command="  ")

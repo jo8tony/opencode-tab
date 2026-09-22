@@ -317,6 +317,7 @@ details.raw-chunks summary:hover { text-decoration: underline; }
 .inline-controls { display: flex; gap: 6px; align-items: center; }
 .inline-controls input { flex: 1; }
 .up-actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.settings-divider { border-top: 1px solid var(--border); margin-top: 16px; }
 .model-list { display: grid; gap: 8px; margin: 6px 0 10px; }
 .model-row {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;

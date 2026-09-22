@@ -5,8 +5,26 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
+
+ORIGINAL_XDG_PREFIX = "LLMPR_ORIGINAL_"
+IMPORT_CONFIG_FILES = ("opencode.json", "opencode.jsonc", "tui.json")
+IMPORT_CONFIG_DIRS = (
+    "agent",
+    "agents",
+    "command",
+    "commands",
+    "plugin",
+    "plugins",
+    "skill",
+    "skills",
+    "tool",
+    "tools",
+    "theme",
+    "themes",
+)
 
 
 def global_config_path() -> Path:
@@ -16,6 +34,157 @@ def global_config_path() -> Path:
         if path.exists():
             return path
     return root / "opencode.jsonc"
+
+
+def _xdg_dir(key: str, fallback: Path) -> Path:
+    value = os.environ.get(key, "").strip()
+    return Path(value).expanduser() if value else fallback
+
+
+def _original_xdg_dir(key: str, fallback: Path) -> Path:
+    value = os.environ.get(f"{ORIGINAL_XDG_PREFIX}{key}", "").strip()
+    return Path(value).expanduser() if value else fallback
+
+
+def isolated_config_dir() -> Path:
+    return _xdg_dir("XDG_CONFIG_HOME", Path.home() / ".config") / "opencode"
+
+
+def isolated_data_dir() -> Path:
+    return _xdg_dir("XDG_DATA_HOME", Path.home() / ".local" / "share") / "opencode"
+
+
+def import_source_dirs() -> tuple[Path, Path]:
+    config = _original_xdg_dir("XDG_CONFIG_HOME", Path.home() / ".config") / "opencode"
+    data = (
+        _original_xdg_dir("XDG_DATA_HOME", Path.home() / ".local" / "share")
+        / "opencode"
+    )
+    return config, data
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve(strict=False) == right.resolve(strict=False)
+    except OSError:
+        return os.path.abspath(left) == os.path.abspath(right)
+
+
+def _tree_files(
+    source: Path, destination: Path, prefix: str
+) -> tuple[list[tuple[Path, Path, str]], int]:
+    candidates: list[tuple[Path, Path, str]] = []
+    ignored_symlinks = 0
+    if not source.is_dir() or source.is_symlink():
+        return candidates, int(source.is_symlink())
+    for root, dirs, files in os.walk(source, followlinks=False):
+        root_path = Path(root)
+        kept_dirs = []
+        for dirname in dirs:
+            child = root_path / dirname
+            if child.is_symlink():
+                ignored_symlinks += 1
+            else:
+                kept_dirs.append(dirname)
+        dirs[:] = kept_dirs
+        for filename in files:
+            item = root_path / filename
+            if item.is_symlink() or not item.is_file():
+                ignored_symlinks += int(item.is_symlink())
+                continue
+            relative = item.relative_to(source)
+            candidates.append(
+                (item, destination / relative, f"{prefix}/{relative.as_posix()}")
+            )
+    return candidates, ignored_symlinks
+
+
+def _import_candidates() -> tuple[list[tuple[Path, Path, str]], int]:
+    source_config, source_data = import_source_dirs()
+    target_config, target_data = isolated_config_dir(), isolated_data_dir()
+    if _same_path(source_config, target_config) and _same_path(source_data, target_data):
+        return [], 0
+
+    candidates: list[tuple[Path, Path, str]] = []
+    ignored_symlinks = 0
+    if not _same_path(source_config, target_config):
+        for name in IMPORT_CONFIG_FILES:
+            source = source_config / name
+            if source.is_symlink():
+                ignored_symlinks += 1
+            elif source.is_file():
+                candidates.append((source, target_config / name, f"config/{name}"))
+        for name in IMPORT_CONFIG_DIRS:
+            items, ignored = _tree_files(
+                source_config / name, target_config / name, f"config/{name}"
+            )
+            candidates.extend(items)
+            ignored_symlinks += ignored
+
+    auth = source_data / "auth.json"
+    if not _same_path(source_data, target_data):
+        if auth.is_symlink():
+            ignored_symlinks += 1
+        elif auth.is_file():
+            candidates.append((auth, target_data / "auth.json", "credentials/auth.json"))
+    return candidates, ignored_symlinks
+
+
+def preview_global_import() -> dict:
+    source_config, source_data = import_source_dirs()
+    target_config, target_data = isolated_config_dir(), isolated_data_dir()
+    candidates, ignored_symlinks = _import_candidates()
+    conflicts = [label for _, destination, label in candidates if destination.exists()]
+    return {
+        "available": bool(candidates),
+        "source": {"config": str(source_config), "data": str(source_data)},
+        "destination": {"config": str(target_config), "data": str(target_data)},
+        "candidate_count": len(candidates),
+        "copy_count": len(candidates) - len(conflicts),
+        "conflicts": conflicts,
+        "ignored_symlinks": ignored_symlinks,
+    }
+
+
+def _copy_without_overwrite(source: Path, destination: Path, *, private: bool) -> bool:
+    if source.is_symlink() or not source.is_file():
+        return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        return False
+    fd, temporary = tempfile.mkstemp(prefix=".opencode-import-", dir=destination.parent)
+    os.close(fd)
+    try:
+        shutil.copy2(source, temporary)
+        if private and os.name != "nt":
+            os.chmod(temporary, 0o600)
+        try:
+            os.link(temporary, destination)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def import_global_config() -> dict:
+    candidates, ignored_symlinks = _import_candidates()
+    copied: list[str] = []
+    skipped: list[str] = []
+    for source, destination, label in candidates:
+        if _copy_without_overwrite(
+            source, destination, private=label == "credentials/auth.json"
+        ):
+            copied.append(label)
+        else:
+            skipped.append(label)
+    return {
+        "ok": True,
+        "copied": copied,
+        "skipped": skipped,
+        "ignored_symlinks": ignored_symlinks,
+    }
 
 
 def read_global_config() -> tuple[Path, str, str]:

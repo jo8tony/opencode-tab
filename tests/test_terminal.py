@@ -35,6 +35,7 @@ class TestTerminalConfig:
     def test_defaults(self):
         t = TerminalConfig()
         assert t.enabled is True
+        assert t.command_mode == "auto"
         assert t.command == "opencode"
         assert t.max_sessions == 8
         assert t.route_through_proxy is True
@@ -75,6 +76,7 @@ class TestResolve:
 
         cfg = make_cfg()
         env = _build_env(cfg, "opencode")
+        assert env["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
         assert env["OPENAI_BASE_URL"] == "http://127.0.0.1:8117"
         assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8117"
         assert json.loads(env["OPENCODE_CONFIG_CONTENT"])["provider"]["main"]["options"]["baseURL"] == "http://127.0.0.1:8117"
@@ -106,10 +108,60 @@ class TestResolve:
         # shell 会话不注入代理变量
         env5 = _build_env(make_cfg(), "shell")
         assert "OPENAI_BASE_URL" not in env5
+        assert "OPENCODE_DISABLE_AUTOUPDATE" not in env5
 
         # inject_env 优先级最高
         env6 = _build_env(make_cfg(inject_env={"OPENAI_BASE_URL": "http://override"}), "opencode")
         assert env6["OPENAI_BASE_URL"] == "http://override"
+        env7 = _build_env(
+            make_cfg(inject_env={"OPENCODE_DISABLE_AUTOUPDATE": "0"}), "opencode"
+        )
+        assert env7["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
+
+    def test_shell_restores_original_xdg_environment(self, monkeypatch):
+        from llm_api_proxy_recorder.terminal.manager import _build_env
+
+        monkeypatch.setenv("XDG_CONFIG_HOME", "/app/config")
+        monkeypatch.setenv("XDG_DATA_HOME", "/app/data")
+        monkeypatch.setenv("LLMPR_ORIGINAL_XDG_CONFIG_HOME", "/user/config")
+        monkeypatch.setenv("LLMPR_ORIGINAL_XDG_DATA_HOME", "")
+        shell_env = _build_env(make_cfg(), "shell")
+        assert shell_env["XDG_CONFIG_HOME"] == "/user/config"
+        assert "XDG_DATA_HOME" not in shell_env
+        assert "LLMPR_ORIGINAL_XDG_CONFIG_HOME" not in shell_env
+
+    def test_opencode_resolution_precedence(self, tmp_path, monkeypatch):
+        import llm_api_proxy_recorder.terminal.manager as manager
+
+        bundled = tmp_path / "opencode.exe"
+        bundled.write_bytes(b"binary")
+        monkeypatch.setattr(manager.sys, "platform", "win32")
+        monkeypatch.setenv(manager.BUNDLED_OPENCODE_ENV, str(bundled))
+        resolved = manager.resolve_opencode(make_cfg())
+        assert resolved.path == str(bundled)
+        assert resolved.source == "bundled"
+
+        custom_exe = tmp_path / "custom-opencode.exe"
+        custom_exe.write_bytes(b"custom")
+        custom = make_cfg(command_mode="custom", command=str(custom_exe))
+        resolved = manager.resolve_opencode(custom)
+        assert resolved.path == str(custom_exe)
+        assert resolved.source == "custom"
+
+        custom = make_cfg(command_mode="custom", command="definitely-not-exist-xyz")
+        resolved = manager.resolve_opencode(custom)
+        assert resolved.path is None
+        assert resolved.source == "missing"
+
+    def test_version_probe_timeout_is_non_fatal(self, monkeypatch):
+        import subprocess
+        import llm_api_proxy_recorder.terminal.manager as manager
+
+        def timeout(*args, **kwargs):
+            raise subprocess.TimeoutExpired("opencode", 0.01)
+
+        monkeypatch.setattr(manager.subprocess, "run", timeout)
+        assert manager.executable_version("opencode", timeout=0.01) is None
 
     def test_manual_models_and_image_support_in_offline_opencode(self, monkeypatch):
         from llm_api_proxy_recorder.terminal.manager import _build_env
@@ -285,6 +337,10 @@ class TestCheckApi:
     def test_check(self, client):
         r = client.get("/__recorder/api/terminal/check").json()
         assert "opencode_found" in r
+        assert r["opencode_source"] in {"bundled", "path", "custom", "missing"}
+        assert "opencode_version" in r
+        assert "bundled_version" in r
+        assert "git_bash_path" in r
         assert "shell_command" in r
         assert r["enabled"] is True
         assert r["pty_available"] is True

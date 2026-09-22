@@ -60,10 +60,14 @@ pub fn run() {
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
+            let cache_dir = app.path().app_cache_dir()?;
             let log_dir = app.path().app_log_dir()?;
+            let state_dir = data_dir.join("state");
             std::fs::create_dir_all(&config_dir)?;
             std::fs::create_dir_all(&data_dir)?;
+            std::fs::create_dir_all(&cache_dir)?;
             std::fs::create_dir_all(&log_dir)?;
+            std::fs::create_dir_all(&state_dir)?;
 
             let config_path = config_dir.join("config.json");
             let records_dir = data_dir.join("records");
@@ -78,7 +82,35 @@ pub fn run() {
                 records_dir.to_string_lossy().into_owned(),
             ];
 
-            let sidecar = app.shell().sidecar("llm-api-proxy-recorder-sidecar")?;
+            let current_exe = std::env::current_exe()?;
+            let bundled_opencode = current_exe
+                .parent()
+                .map(|parent| {
+                    parent.join(if cfg!(windows) {
+                        "opencode.exe"
+                    } else {
+                        "opencode"
+                    })
+                })
+                .unwrap_or_default();
+            let mut sidecar = app.shell().sidecar("llm-api-proxy-recorder-sidecar")?;
+            for key in [
+                "XDG_CONFIG_HOME",
+                "XDG_DATA_HOME",
+                "XDG_CACHE_HOME",
+                "XDG_STATE_HOME",
+            ] {
+                sidecar = sidecar.env(
+                    format!("LLMPR_ORIGINAL_{key}"),
+                    std::env::var_os(key).unwrap_or_default(),
+                );
+            }
+            sidecar = sidecar
+                .env("LLMPR_BUNDLED_OPENCODE", bundled_opencode)
+                .env("XDG_CONFIG_HOME", &config_dir)
+                .env("XDG_DATA_HOME", &data_dir)
+                .env("XDG_CACHE_HOME", &cache_dir)
+                .env("XDG_STATE_HOME", &state_dir);
             let (mut receiver, child) = sidecar.args(args).spawn()?;
             app.manage(SidecarState(Mutex::new(Some(child))));
 

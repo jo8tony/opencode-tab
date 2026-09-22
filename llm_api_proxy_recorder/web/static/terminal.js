@@ -5,6 +5,13 @@
 let TERM = null;
 let terminalLoadId = 0;
 
+function opencodeStatusText(check) {
+  if (!check.pty_available) return "当前系统缺少终端依赖";
+  if (!check.opencode_found) return "未检测到 OpenCode，可先使用 shell 会话";
+  const source = { bundled: "随包", custom: "自定义", path: "PATH" }[check.opencode_source] || "已检测";
+  return `OpenCode ${check.opencode_version || ""} 已就绪（${source}）`.replace("  ", " ");
+}
+
 /* ============================================================ 页面渲染 */
 function renderTerminal(view) {
   if (TERM) {
@@ -58,7 +65,8 @@ function renderTerminal(view) {
     newBtn.disabled = !check.pty_available || !check.enabled;
     const hint = el("div", {
       class: "term-hint " + (check.opencode_found ? "ok" : "warn"),
-      text: !check.pty_available ? "当前系统缺少终端依赖" : check.opencode_found ? "opencode 已就绪" : "未检测到 opencode，可先使用 shell 会话",
+      text: opencodeStatusText(check),
+      title: check.compatibility_warning || "",
     });
     TERM.newBtn = newBtn;
     TERM.hint = hint;
@@ -133,7 +141,8 @@ async function refreshTerminalInfo() {
     TERM.check = check;
     TERM.newBtn.disabled = !check.pty_available || !check.enabled;
     TERM.hint.className = "term-hint " + (check.opencode_found ? "ok" : "warn");
-    TERM.hint.textContent = !check.pty_available ? "当前系统缺少终端依赖" : check.opencode_found ? "opencode 已就绪" : "未检测到 opencode，可先使用 shell 会话";
+    TERM.hint.textContent = opencodeStatusText(check);
+    TERM.hint.title = check.compatibility_warning || "";
     if (TERM.projectsRequestId === projectsRequestId) {
       TERM.projects = projects.items || [];
       refreshProjectList();
@@ -544,7 +553,7 @@ function openCreateModal(project = null) {
   const opencodeOpt = el("label", { class: "term-kind" },
     el("input", { type: "radio", name: "term-kind", value: "opencode", checked: true, disabled: !check.opencode_found }),
     el("span", null, " opencode", check.opencode_found
-      ? el("span", { class: "dim", text: "（AI 编码代理）" })
+      ? el("span", { class: "dim", text: `（AI 编码代理 · ${check.opencode_version || check.opencode_source || "ready"}）` })
       : el("span", { class: "term-warn-text", text: "（未检测到）" })));
   const shellOpt = el("label", { class: "term-kind" },
     el("input", { type: "radio", name: "term-kind", value: "shell" }),
@@ -591,6 +600,8 @@ function openCreateModal(project = null) {
         el("label", { class: "f-label", text: "项目目录" }),
         el("div", { class: "term-cwd-row" }, cwdInput, toggleBtn),
         el("div", { class: "f-hint", text: "opencode 将在该目录下启动；也可直接粘贴路径" })),
+      el("div", { class: "term-warn-text", text: "OpenCode 可在所选项目内执行命令并读写文件；其权限确认不是安全沙箱，请仅用于可信任的项目。" }),
+      check.compatibility_warning ? el("div", { class: "term-warn-text", text: check.compatibility_warning }) : null,
       browser,
       errLine,
       el("div", { class: "modal-actions" },

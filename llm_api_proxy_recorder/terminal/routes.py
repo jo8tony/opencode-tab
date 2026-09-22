@@ -18,9 +18,13 @@ from typing import Literal
 
 from llm_api_proxy_recorder.config import AppConfig
 from llm_api_proxy_recorder.terminal.manager import (
+    BUNDLED_OPENCODE_ENV,
     PtyProcess,
     TerminalError,
+    detect_git_bash,
     detect_shell,
+    executable_version,
+    resolve_opencode,
     resolve_executable,
 )
 
@@ -149,13 +153,27 @@ def browse_fs(request: Request, path: str | None = Query(None)):
 @router.get("/terminal/check")
 def terminal_check(request: Request) -> dict:
     t = _cfg(request).terminal
-    opencode_path = resolve_executable(t.command)
+    resolution = resolve_opencode(_cfg(request))
+    opencode_path = resolution.path
+    git_bash_path = detect_git_bash()
+    bundled_path = os.environ.get(BUNDLED_OPENCODE_ENV, "") if sys.platform == "win32" else ""
+    bundled_path = bundled_path if bundled_path and Path(bundled_path).is_file() else ""
     shell_cmd = t.shell_command or detect_shell()
     shell_path = resolve_executable(shell_cmd)
     return {
         "opencode_found": bool(opencode_path),
         "opencode_path": opencode_path,
         "opencode_command": t.command,
+        "opencode_source": resolution.source,
+        "opencode_version": executable_version(opencode_path),
+        "bundled_version": executable_version(bundled_path),
+        "git_bash_path": git_bash_path,
+        "compatibility_warning": (
+            "未检测到 Git Bash；OpenCode 在 Windows 上仍可启动，"
+            "但部分 AI shell 命令可能与 cmd.exe 语法不兼容。"
+            if sys.platform == "win32" and not git_bash_path
+            else None
+        ),
         "shell_command": shell_cmd,
         "shell_found": bool(shell_path),
         "enabled": t.enabled,

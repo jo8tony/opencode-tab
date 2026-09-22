@@ -45,6 +45,12 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Cache OpenCode release asset
+        uses: actions/cache@v4
+        with:
+          path: build/opencode
+          key: opencode-windows-x64-${{ hashFiles('packaging/opencode.json') }}
+
       - name: Run tests
         run: python -m pytest tests/ -q
 
@@ -54,6 +60,23 @@ jobs:
 
       - name: Build Windows installer
         run: npm exec tauri build -- --bundles nsis
+
+      - name: Smoke test installed sidecars
+        shell: pwsh
+        run: |
+          $Installer = (Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1).FullName
+          if (-not $Installer) { throw "NSIS installer not found" }
+          $InstallDir = Join-Path $env:RUNNER_TEMP "llm-proxy-recorder-smoke"
+          $Process = Start-Process -FilePath $Installer -ArgumentList @("/S", "/D=$InstallDir") -Wait -PassThru
+          if ($Process.ExitCode -ne 0) { throw "Silent install failed: $($Process.ExitCode)" }
+          $OpenCode = Get-ChildItem $InstallDir -Recurse -File -Filter "opencode.exe" | Select-Object -First 1
+          $Recorder = Get-ChildItem $InstallDir -Recurse -File -Filter "llm-api-proxy-recorder-sidecar.exe" | Select-Object -First 1
+          $License = Get-ChildItem $InstallDir -Recurse -File -Filter "OpenCode-LICENSE.txt" | Select-Object -First 1
+          if (-not $OpenCode) { throw "Installed opencode.exe not found" }
+          if (-not $Recorder) { throw "Installed recorder sidecar not found" }
+          if (-not $License) { throw "Installed OpenCode license not found" }
+          & $OpenCode.FullName --version
+          if ($LASTEXITCODE -ne 0) { throw "Installed OpenCode smoke test failed" }
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4

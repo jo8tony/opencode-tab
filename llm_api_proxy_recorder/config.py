@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -102,7 +102,9 @@ class TerminalConfig(BaseModel):
     """Web 终端模块：浏览器中管理 opencode / shell 会话。"""
 
     enabled: bool = True
-    # opencode 命令（创建会话时用 PATH 解析；支持完整路径）
+    # auto = Windows 优先随包二进制，其他情况回退 PATH；custom = 仅使用 command。
+    command_mode: Literal["auto", "custom"] = "auto"
+    # 自定义 opencode 命令（支持完整路径或 PATH 中的命令名）
     command: str = "opencode"
     # 传给 opencode 的额外参数
     args: list[str] = Field(default_factory=list)
@@ -118,8 +120,26 @@ class TerminalConfig(BaseModel):
     proxy_upstream: str = ""
     # OpenCode provider ID；空值时使用所选上游名称。
     opencode_provider: str = ""
-    # 注入进程的额外环境变量（优先级最高，可覆盖代理注入）
+    # 注入进程的额外环境变量（可覆盖代理/目录注入，但不可开启 OpenCode 自更新）
     inject_env: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_command_mode(cls, value: Any) -> Any:
+        """兼容旧配置：默认 opencode 表示自动解析，非默认命令保留为自定义。"""
+        if isinstance(value, dict) and "command_mode" not in value:
+            migrated = dict(value)
+            command = str(migrated.get("command") or "").strip()
+            migrated["command_mode"] = "auto" if command in ("", "opencode") else "custom"
+            return migrated
+        return value
+
+    @model_validator(mode="after")
+    def _check_custom_command(self) -> "TerminalConfig":
+        self.command = self.command.strip()
+        if self.command_mode == "custom" and not self.command:
+            raise ValueError("command_mode=custom 时 command 不能为空")
+        return self
 
 
 class AppConfig(BaseModel):

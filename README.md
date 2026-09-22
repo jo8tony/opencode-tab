@@ -20,7 +20,7 @@
 
 - Python ≥ 3.10
 - 依赖：FastAPI / uvicorn / httpx / pydantic（见 `pyproject.toml`）
-- Web 终端支持 Windows（依赖 `pywinpty` ConPTY）与 macOS（系统 PTY）；`opencode` 需在 PATH 中，缺失时仍可启动 shell 会话
+- Web 终端支持 Windows（依赖 `pywinpty` ConPTY）与 macOS（系统 PTY）；Windows x64 安装包已内置固定版本的 OpenCode CLI，macOS 仍从 PATH 查找
 
 ## 安装
 
@@ -151,8 +151,9 @@ curl http://127.0.0.1:8117/up/deepseek/v1/chat/completions -H "Content-Type: app
 - 会话由服务端托管，**浏览器关闭/断网不杀进程**，重新打开自动恢复；WebSocket 断线自动重连并回放缓冲。服务停止会结束会话
 - 成功启动过的项目目录自动保存于配置文件旁的 `terminal-projects.json`；会话结束或服务重启后仍显示在侧栏，可再次启动，也可单独移除项目
 - 设置页「Web 终端 → OpenCode 接口来源」可选**使用本代理接口**或**使用 OpenCode 原始配置**。本代理模式会为新启动的 OpenCode 进程临时设置对应 provider 的 `baseURL`（不修改项目的 `opencode.json`）；可指定代理上游及 OpenCode provider ID。原始配置模式不注入代理地址
+- Windows 默认运行安装包中的 OpenCode，设置页可切换为自定义命令。随包版禁止自更新，只随本应用发布升级；如随包文件不可用，自动模式才回退到 PATH
 - 上游服务中可逐个填写 OpenCode 的模型 ID，并标记图片、音频、视频、PDF 输入能力。模型 ID 是上游接口接受的 `model` 值，不含 `provider/` 前缀。配置手动模型后，新建的代理模式会话会从本地配置添加这些模型并停用在线模型目录更新；原有缓存中的模型可能继续显示。此模式使用 OpenAI 兼容的 `/chat/completions` 接口，勾选能力仅控制 OpenCode 的输入识别，实际调用仍需上游模型支持
-- 设置页另有 **OpenCode 全局配置** 编辑区，直接读取并保存运行服务的用户目录下 `~/.config/opencode/opencode.jsonc`（优先使用已有的 `.jsonc`，其次 `.json`）。支持 JSONC 注释及末尾逗号，保存时保留原文并校验语法，在文件被外部修改时阻止覆盖。此项与代理项目的配置文件分别保存，改动在新建的 OpenCode 会话中读取；代理模式的临时 `baseURL` 优先于全局配置中的同名项
+- 设置页另有 **OpenCode 全局配置** 编辑区，读取并保存本应用隔离目录中的 `opencode.jsonc`（优先使用已有的 `.jsonc`，其次 `.json`）。支持 JSONC 注释及末尾逗号，保存时保留原文并校验语法，在文件被外部修改时阻止覆盖。可一次性导入用户已有的配置、扩展和 `auth.json`；已有文件不覆盖，历史会话、缓存和日志不导入
 - 如果上游 `base_url` 自带 `/v1`，代理会保留该路径；请使所选上游与 OpenCode provider 的接口格式一致
 
 ## 管理端 API
@@ -175,6 +176,7 @@ curl http://127.0.0.1:8117/up/deepseek/v1/chat/completions -H "Content-Type: app
 | PUT | `/settings` | 保存配置（部分项需重启） |
 | POST | `/settings/test-upstream` | 测试上游连通性 |
 | GET/PUT | `/settings/opencode-config` | 读取/保存 OpenCode 全局 JSONC 配置 |
+| GET/POST | `/settings/opencode-import` | 预览/执行已有 OpenCode 配置、扩展与凭据导入 |
 | GET | `/meta` | 服务元信息 |
 | GET | `/terminal/check` | 检测 opencode / shell 命令 |
 | GET | `/terminal/sessions` | 终端会话列表 |
@@ -244,6 +246,8 @@ python -m venv .venv-build
 npm install
 npm run desktop:build:windows
 ```
+
+Windows 构建会根据 `packaging/opencode.json` 下载并校验固定的 OpenCode x64 baseline 发布资产，并将其与 Python sidecar 一起写入 NSIS 安装包。构建机需能访问 GitHub Releases，安装与首次运行不需联网下载 OpenCode。
 
 ## 目录结构
 

@@ -15,7 +15,11 @@ from pydantic import BaseModel, Field
 from llm_api_proxy_recorder import __version__
 from llm_api_proxy_recorder.config import AppConfig, resolved_records_dir, save_config
 from llm_api_proxy_recorder.admin.opencode_config import (
-    read_global_config, validate_jsonc, write_global_config,
+    import_global_config,
+    preview_global_import,
+    read_global_config,
+    validate_jsonc,
+    write_global_config,
 )
 from llm_api_proxy_recorder.recording.parse import diff_new_messages, message_digest, system_text
 
@@ -404,6 +408,18 @@ def put_opencode_config(body: OpenCodeConfigUpdate) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"ok": True, "path": str(path), "revision": write_global_config(path, body.content)}
+
+
+@router.get("/settings/opencode-import")
+def get_opencode_import() -> dict:
+    """预览可从用户全局 OpenCode 目录导入的允许列表，不返回文件内容。"""
+    return preview_global_import()
+
+
+@router.post("/settings/opencode-import")
+def post_opencode_import() -> dict:
+    """复制缺失的配置、扩展与凭据；已有目标永不覆盖。"""
+    return import_global_config()
 
 
 class TestUpstreamBody(BaseModel):

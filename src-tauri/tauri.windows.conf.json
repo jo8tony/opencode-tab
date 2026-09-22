@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "externalBin": [
+      "binaries/llm-api-proxy-recorder-sidecar",
+      "binaries/opencode"
+    ],
+    "resources": {
+      "../third_party/opencode/LICENSE": "licenses/OpenCode-LICENSE.txt",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
+    }
+  }
+}

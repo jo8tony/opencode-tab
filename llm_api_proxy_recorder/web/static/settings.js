@@ -224,6 +224,13 @@ function renderSettings(view) {
     /* ---------------- 终端设置 */
     const tc = cfg.terminal || {};
     const cmdIn = el("input", { type: "text", value: tc.command != null ? tc.command : "opencode", class: "mono", placeholder: "opencode（PATH 中的命令名或完整路径）" });
+    const cmdModeSel = el("select", null,
+      el("option", { value: "auto", text: "随应用提供（缺失时回退 PATH）" }),
+      el("option", { value: "custom", text: "自定义命令" }));
+    cmdModeSel.value = tc.command_mode || ((tc.command && tc.command !== "opencode") ? "custom" : "auto");
+    const syncCommandMode = () => { cmdIn.disabled = cmdModeSel.value !== "custom"; };
+    cmdModeSel.addEventListener("change", syncCommandMode);
+    syncCommandMode();
     const shellIn = el("input", { type: "text", value: tc.shell_command || "", class: "mono", placeholder: "留空 = 使用系统默认 shell" });
     const maxSessIn = el("input", { type: "number", value: tc.max_sessions != null ? tc.max_sessions : 8, min: "1", max: "64", style: "width:120px" });
     const sbIn = el("input", { type: "number", value: tc.scrollback_kb != null ? tc.scrollback_kb : 256, min: "0", max: "8192", style: "width:120px" });
@@ -252,7 +259,9 @@ function renderSettings(view) {
         termSw,
         el("div", { class: "field full" }, el("label", { class: "f-label", text: "OpenCode 接口来源" }), modeSel,
           el("div", { class: "f-hint", text: "本代理：仅对新启动的 OpenCode 会话设置 provider 接口地址；原始配置：直接使用 OpenCode 自己的配置" })),
-        el("div", { class: "field" }, el("label", { class: "f-label", text: "opencode 命令 command" }), cmdIn),
+        el("div", { class: "field" }, el("label", { class: "f-label", text: "OpenCode 程序来源" }), cmdModeSel),
+        el("div", { class: "field" }, el("label", { class: "f-label", text: "自定义 command" }), cmdIn,
+          el("div", { class: "f-hint", text: "只有选择自定义时生效；可填完整路径或 PATH 命令" })),
         el("div", { class: "field" }, el("label", { class: "f-label", text: "shell 命令 shell_command" }), shellIn),
         el("div", { class: "field" }, el("label", { class: "f-label", text: "会话上限 max_sessions" }), maxSessIn),
         el("div", { class: "field" }, el("label", { class: "f-label", text: "回放缓冲 scrollback_kb" }), sbIn,
@@ -299,13 +308,46 @@ function renderSettings(view) {
       }
       reloadConfig.disabled = false;
     }
+    const importMessage = el("div", { class: "empty-hint", text: "正在检查可导入的 OpenCode 配置…" });
+    const importBtn = el("button", { type: "button", class: "btn", text: "导入已有 OpenCode 配置", disabled: true, onclick: async () => {
+      if (!window.confirm("将复制缺失的配置、扩展和凭据；已有文件不会被覆盖。继续吗？")) return;
+      importBtn.disabled = true;
+      importMessage.textContent = "导入中…";
+      try {
+        const result = await api("settings/opencode-import", { method: "POST", body: {}, silent: true });
+        importMessage.textContent = `已导入 ${result.copied.length} 个文件，跳过 ${result.skipped.length} 个已有文件；新建 OpenCode 会话时生效。`;
+        toast("OpenCode 配置导入完成", "ok");
+        await loadOpenCodeConfig();
+        await loadImportPreview();
+      } catch (e) {
+        importMessage.textContent = "导入失败：" + (e.detail ? format422(e.detail) : e.message);
+        importBtn.disabled = false;
+      }
+    } });
+    async function loadImportPreview() {
+      try {
+        const preview = await api("settings/opencode-import", { silent: true });
+        importBtn.disabled = !preview.available || preview.copy_count < 1;
+        if (!preview.available) {
+          importMessage.textContent = "未检测到可导入的用户 OpenCode 配置。";
+        } else {
+          importMessage.textContent = `来源：${preview.source.config}；可导入 ${preview.copy_count} 个，已存在 ${preview.conflicts.length} 个（不覆盖）。`;
+        }
+      } catch (e) {
+        importBtn.disabled = true;
+        importMessage.textContent = "无法检查导入来源：" + e.message;
+      }
+    }
     view.append(el("section", { class: "card" },
       el("h2", { text: "OpenCode 全局配置" }),
       configPath,
-      el("div", { class: "empty-hint", text: "直接编辑 OpenCode 的 opencode.json / opencode.jsonc。代理模式会临时覆盖所选 provider 的接口地址及手动模型的输入能力；其余设置仍会合并生效。" }),
+      el("div", { class: "empty-hint", text: "直接编辑本应用隔离的 OpenCode 配置。项目内 opencode.json / .opencode 仍正常生效；代理模式会临时覆盖所选 provider 的接口地址及手动模型的输入能力。" }),
       configEditor,
-      el("div", { class: "up-actions" }, reloadConfig, saveConfig), configMessage));
+      el("div", { class: "up-actions" }, reloadConfig, saveConfig), configMessage,
+      el("div", { class: "settings-divider" }),
+      el("div", { class: "up-actions" }, importBtn), importMessage));
     loadOpenCodeConfig();
+    loadImportPreview();
 
     /* ---------------- 数据清理 */
     function fmtBytes(b) {
@@ -452,6 +494,7 @@ function renderSettings(view) {
         },
         terminal: {
           enabled: termChk.checked,
+          command_mode: cmdModeSel.value,
           command: cmdIn.value.trim() || "opencode",
           shell_command: shellIn.value.trim(),
           max_sessions: Math.max(1, parseInt(maxSessIn.value, 10) || 8),
