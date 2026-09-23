@@ -7,6 +7,9 @@ use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 struct SidecarState(Mutex<Option<CommandChild>>);
 
 fn recorder_is_ready() -> bool {
@@ -42,6 +45,17 @@ fn stop_sidecar(app: &tauri::AppHandle) {
     let state = app.state::<SidecarState>();
     if let Ok(mut guard) = state.0.lock() {
         if let Some(child) = guard.take() {
+            #[cfg(windows)]
+            {
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                let _ = std::process::Command::new("taskkill")
+                    .arg("/F")
+                    .arg("/T")
+                    .arg("/PID")
+                    .arg(child.pid().to_string())
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .status();
+            }
             let _ = child.kill();
         }
     };

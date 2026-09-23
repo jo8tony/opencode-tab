@@ -8,6 +8,11 @@
     "resources": {
       "../third_party/opencode/LICENSE": "licenses/OpenCode-LICENSE.txt",
       "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/installer-hooks.nsh"
+      }
     }
   }
 }
