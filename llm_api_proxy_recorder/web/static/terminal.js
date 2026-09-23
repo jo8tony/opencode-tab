@@ -17,6 +17,7 @@ function renderTerminal(view) {
   if (TERM) {
     TERM.page.classList.remove("hidden");
     view.replaceChildren(TERM.page);
+    document.body.classList.add("term-route");
     addCleanup(parkTerminal);
     if (TERM.activeId) activate(TERM.activeId);
     refreshTerminalInfo();
@@ -54,6 +55,7 @@ function renderTerminal(view) {
       tabs: null,
       tabList: null,
       fullscreenBtn: null,
+      fullscreen: false,
       main: null,
       page: null,
       area: null,
@@ -76,8 +78,8 @@ function renderTerminal(view) {
     TERM.tabs = el("div", { class: "term-tabs" });
     TERM.tabList = el("div", { class: "term-tab-list" });
     TERM.fullscreenBtn = el("button", {
-      class: "term-fullscreen", type: "button", title: "全屏显示终端",
-      "aria-label": "全屏显示终端", text: "⛶", onclick: toggleTerminalFullscreen,
+      class: "term-fullscreen", type: "button", title: "应用内全屏显示终端",
+      "aria-label": "应用内全屏显示终端", text: "⛶", onclick: toggleTerminalFullscreen,
     });
     TERM.tabs.append(TERM.tabList, TERM.fullscreenBtn);
     TERM.area = el("div", { class: "term-area" });
@@ -94,6 +96,7 @@ function renderTerminal(view) {
         TERM.projectList),
       TERM.main);
     view.replaceChildren(TERM.page);
+    document.body.classList.add("term-route");
 
     // 已有会话逐个挂接（服务重启前残留的会话仍在运行）
     for (const info of sessions.items || []) addSession(info, { focus: false });
@@ -106,19 +109,13 @@ function renderTerminal(view) {
     TERM.ro.observe(TERM.area);
     const onWinResize = () => fitActive();
     window.addEventListener("resize", onWinResize);
-    document.addEventListener("fullscreenchange", () => {
-      if (!TERM) return;
-      const full = document.fullscreenElement === TERM.main;
-      TERM.fullscreenBtn.textContent = full ? "↙" : "⛶";
-      TERM.fullscreenBtn.title = full ? "退出全屏" : "全屏显示终端";
-      TERM.fullscreenBtn.setAttribute("aria-label", TERM.fullscreenBtn.title);
-      requestAnimationFrame(fitActive);
-    });
     document.addEventListener("click", (ev) => {
       if (!ev.target.closest(".term-project-more, .term-project-menu")) closeProjectMenus();
     });
     document.addEventListener("keydown", (ev) => {
-      if (ev.key === "Escape") closeProjectMenus();
+      if (ev.key !== "Escape") return;
+      closeProjectMenus();
+      if (TERM && TERM.fullscreen && !document.querySelector(".modal-mask")) setTerminalFullscreen(false);
     });
     addCleanup(parkTerminal);
   })();
@@ -126,8 +123,10 @@ function renderTerminal(view) {
 
 function parkTerminal() {
   if (!TERM || !TERM.page) return;
+  setTerminalFullscreen(false);
   TERM.page.classList.add("hidden");
   document.body.append(TERM.page);
+  document.body.classList.remove("term-route");
 }
 
 async function refreshTerminalInfo() {
@@ -150,14 +149,22 @@ async function refreshTerminalInfo() {
   } catch (_) { /* 保留当前信息，下一次进入页面再试 */ }
 }
 
-async function toggleTerminalFullscreen() {
-  if (!TERM) return;
-  try {
-    if (document.fullscreenElement === TERM.main) await document.exitFullscreen();
-    else await TERM.main.requestFullscreen();
-  } catch (e) {
-    toast("切换全屏失败：" + e.message, "error");
+/* 应用内全屏：终端铺满整个应用窗口，不触发显示器（操作系统）全屏 */
+function setTerminalFullscreen(on) {
+  if (!TERM || !TERM.page) return;
+  TERM.fullscreen = on;
+  TERM.page.classList.toggle("term-fs", on);
+  if (TERM.fullscreenBtn) {
+    TERM.fullscreenBtn.textContent = on ? "↙" : "⛶";
+    TERM.fullscreenBtn.title = on ? "退出应用内全屏" : "应用内全屏显示终端";
+    TERM.fullscreenBtn.setAttribute("aria-label", TERM.fullscreenBtn.title);
   }
+  requestAnimationFrame(fitActive);
+}
+
+function toggleTerminalFullscreen() {
+  if (!TERM) return;
+  setTerminalFullscreen(!TERM.fullscreen);
 }
 
 /* ============================================================ 会话管理 */

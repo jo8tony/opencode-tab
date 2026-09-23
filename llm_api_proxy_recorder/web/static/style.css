@@ -527,6 +527,17 @@ details.raw-chunks summary:hover { text-decoration: underline; }
   display: flex; gap: 14px; height: calc(100vh - 96px);
   min-height: 480px;
 }
+/* 终端路由下解除 .view 的固定宽度，窗口最大化时铺满整宽 */
+body.term-route .view { max-width: none; padding: 14px 16px 16px; }
+body.term-route .term-page { height: calc(100vh - 84px); }
+/* 应用内全屏：铺满整个应用窗口，而非显示器（操作系统）全屏 */
+body.term-route .term-page.term-fs {
+  position: fixed; inset: 0; z-index: 80;
+  height: 100vh; min-height: 0; padding: 0; gap: 0;
+  background: var(--bg); border-radius: 0;
+}
+body.term-route .term-page.term-fs .term-side { display: none; }
+body.term-route .term-page.term-fs .term-main { border: 0; border-radius: 0; }
 .term-side {
   width: 250px; flex: none; display: flex; flex-direction: column;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
@@ -595,9 +606,6 @@ details.raw-chunks summary:hover { text-decoration: underline; }
   flex: 1; min-width: 0; display: flex; flex-direction: column;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
   overflow: hidden;
-}
-.term-main:fullscreen {
-  width: 100vw; height: 100vh; border: 0; border-radius: 0;
 }
 .term-tabs {
   display: flex; align-items: stretch; gap: 4px; padding: 6px 8px 0;
