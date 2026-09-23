@@ -68,33 +68,41 @@ async def _verify_terminal_input(base_url: str, session_id: str) -> None:
     ws_url = base_url.replace("http://", "ws://", 1)
     ws_url += f"/__recorder/api/terminal/ws/{session_id}"
     received = bytearray()
-    async with websockets.connect(ws_url, open_timeout=10) as websocket:
-        deadline = asyncio.get_running_loop().time() + 20
-        attached = False
-        while asyncio.get_running_loop().time() < deadline and not attached:
-            message = await asyncio.wait_for(websocket.recv(), timeout=5)
-            if isinstance(message, str):
-                payload = json.loads(message)
-                attached = payload.get("type") == "attached" and payload.get("alive") is True
-            else:
-                received.extend(message)
-        if not attached:
-            raise RuntimeError("terminal websocket never reported attached")
+    try:
+        async with websockets.connect(ws_url, open_timeout=10) as websocket:
+            deadline = asyncio.get_running_loop().time() + 20
+            attached = False
+            while asyncio.get_running_loop().time() < deadline and not attached:
+                message = await asyncio.wait_for(websocket.recv(), timeout=5)
+                if isinstance(message, str):
+                    payload = json.loads(message)
+                    attached = payload.get("type") == "attached" and payload.get("alive") is True
+                else:
+                    received.extend(message)
+            if not attached:
+                raise RuntimeError("terminal websocket never reported attached")
 
-        await websocket.send(json.dumps({"type": "input", "data": f"Write-Output {MARKER}\r"}))
-        while asyncio.get_running_loop().time() < deadline:
-            message = await asyncio.wait_for(websocket.recv(), timeout=5)
-            if isinstance(message, bytes):
-                received.extend(message)
-                if MARKER.encode() in received:
-                    return
-            else:
-                payload = json.loads(message)
-                if payload.get("type") == "input_error":
-                    raise RuntimeError(payload.get("detail") or "terminal input failed")
-                if payload.get("type") == "exit":
-                    raise RuntimeError(f"terminal exited with code {payload.get('code')}")
-    raise RuntimeError("terminal input marker was not returned by ConPTY")
+            await websocket.send(json.dumps({"type": "input", "data": f"Write-Output {MARKER}\r"}))
+            while asyncio.get_running_loop().time() < deadline:
+                message = await asyncio.wait_for(websocket.recv(), timeout=5)
+                if isinstance(message, bytes):
+                    received.extend(message)
+                    if MARKER.encode() in received:
+                        return
+                else:
+                    payload = json.loads(message)
+                    if payload.get("type") == "input_error":
+                        raise RuntimeError(payload.get("detail") or "terminal input failed")
+                    if payload.get("type") == "exit":
+                        raise RuntimeError(f"terminal exited with code {payload.get('code')}")
+        raise RuntimeError("terminal input marker was not returned by ConPTY")
+    except BaseException:
+        print(
+            "pty output before failure: "
+            f"{received.decode('utf-8', errors='replace')!r}",
+            file=sys.stderr,
+        )
+        raise
 
 
 def main() -> None:
@@ -108,7 +116,9 @@ def main() -> None:
     if subsystem != 2:
         raise RuntimeError(f"desktop executable is not Windows GUI subsystem: {subsystem}")
 
-    with tempfile.TemporaryDirectory(prefix="llmpr-package-smoke-") as temp_value:
+    with tempfile.TemporaryDirectory(
+        prefix="llmpr-package-smoke-", ignore_cleanup_errors=True
+    ) as temp_value:
         temp = Path(temp_value)
         env = os.environ.copy()
         env.update(
@@ -121,6 +131,7 @@ def main() -> None:
             }
         )
         log_path = temp / "sidecar.log"
+        base_url = "http://127.0.0.1:18117"
         command = [
             str(args.recorder),
             "--host",
@@ -133,6 +144,7 @@ def main() -> None:
             str(temp / "records"),
         ]
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        session_id: str | None = None
         with log_path.open("wb") as log_file:
             process = subprocess.Popen(
                 command,
@@ -142,7 +154,6 @@ def main() -> None:
                 creationflags=creationflags,
             )
             try:
-                base_url = "http://127.0.0.1:18117"
                 _wait_until_ready(base_url, process)
                 check = _request_json(base_url, "GET", "/__recorder/api/terminal/check")
                 if check.get("opencode_source") != "bundled" or not check.get("opencode_version"):
@@ -153,15 +164,24 @@ def main() -> None:
                     "/__recorder/api/terminal/sessions",
                     {"cwd": str(temp), "kind": "shell", "cols": 100, "rows": 30},
                 )
-                asyncio.run(_verify_terminal_input(base_url, session["id"]))
+                session_id = session["id"]
+                asyncio.run(_verify_terminal_input(base_url, session_id))
                 _request_json(
-                    base_url, "DELETE", f"/__recorder/api/terminal/sessions/{session['id']}"
+                    base_url, "DELETE", f"/__recorder/api/terminal/sessions/{session_id}"
                 )
+                session_id = None
             except BaseException:
                 log_file.flush()
                 print(log_path.read_text(encoding="utf-8", errors="replace")[-12000:], file=sys.stderr)
                 raise
             finally:
+                if session_id is not None:
+                    try:
+                        _request_json(
+                            base_url, "DELETE", f"/__recorder/api/terminal/sessions/{session_id}"
+                        )
+                    except Exception:
+                        pass
                 process.terminate()
                 try:
                     process.wait(timeout=10)
