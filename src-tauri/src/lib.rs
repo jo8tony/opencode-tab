@@ -156,7 +156,7 @@ pub fn run() {
 
             let window =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                    .title("LLM API 代理记录器")
+                    .title("Sona Code")
                     .inner_size(1280.0, 820.0)
                     .min_inner_size(900.0, 620.0)
                     .center()

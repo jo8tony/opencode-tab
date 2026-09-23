@@ -225,7 +225,7 @@ python3.12 -m venv .venv-build
 npm install
 ```
 
-生成 sidecar、`.app` 和 `.dmg`：
+生成 sidecar、`Sona Code.app` 和 `.dmg`：
 
 ```bash
 npm run desktop:build
@@ -235,7 +235,7 @@ npm run desktop:build
 
 ### Windows 安装包
 
-推送到 `main` 分支会触发 `.github/workflows/build-windows.yml`：在 Windows x64 环境运行测试、构建 PyInstaller sidecar、生成 Tauri NSIS 安装程序，并上传名为 `llm-proxy-recorder-windows-x64` 的 GitHub Actions artifact。
+推送到 `main` 分支会触发 `.github/workflows/build-windows.yml`：在 Windows x64 环境运行测试、构建 PyInstaller sidecar、生成 Tauri NSIS 安装程序，并上传名为 `sona-code-windows-x64` 的 GitHub Actions artifact。
 
 Windows 本机也可执行：
 

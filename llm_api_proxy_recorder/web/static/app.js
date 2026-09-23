@@ -223,7 +223,7 @@ function route() {
     const m = hash.match(r.re);
     if (m) {
       setNav(r.nav);
-      document.title = "LLM API 代理记录器 · " + ({ dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", terminal: "终端", settings: "设置" }[r.nav] || "");
+      document.title = "Sona Code · " + ({ dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", terminal: "终端", settings: "设置" }[r.nav] || "");
       r.render(view, m);
       return;
     }
