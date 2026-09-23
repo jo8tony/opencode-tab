@@ -215,7 +215,7 @@ function setNav(name) {
 }
 
 function route() {
-  const hash = location.hash || "#/dashboard";
+  const hash = location.hash || "#/terminal";
   runCleanups();
   const view = $("#view");
   view.replaceChildren(el("div", { class: "loading", text: "加载中…" }));
@@ -228,7 +228,7 @@ function route() {
       return;
     }
   }
-  location.hash = "#/dashboard";
+  location.hash = "#/terminal";
 }
 
 /* ============================================================ 仪表盘 */
