@@ -153,6 +153,20 @@ class TestResolve:
         assert resolved.path is None
         assert resolved.source == "missing"
 
+    def test_macos_gui_finds_opencode_from_login_shell_path(self, tmp_path, monkeypatch):
+        import llm_api_proxy_recorder.terminal.manager as manager
+
+        executable = tmp_path / "opencode"
+        executable.write_text("#!/bin/sh\nexit 0\n")
+        executable.chmod(0o755)
+        monkeypatch.setattr(manager.sys, "platform", "darwin")
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+        monkeypatch.setattr(manager, "_macos_login_path", lambda: str(tmp_path))
+
+        resolved = manager.resolve_opencode(make_cfg())
+        assert resolved.path == str(executable)
+        assert str(tmp_path) in manager._build_env(make_cfg(), "opencode")["PATH"].split(os.pathsep)
+
     def test_version_probe_timeout_is_non_fatal(self, monkeypatch):
         import subprocess
         import llm_api_proxy_recorder.terminal.manager as manager

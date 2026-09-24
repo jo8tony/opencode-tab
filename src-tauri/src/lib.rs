@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
@@ -12,7 +12,7 @@ use std::os::windows::process::CommandExt;
 
 struct SidecarState(Mutex<Option<CommandChild>>);
 
-fn recorder_is_ready() -> bool {
+fn recorder_is_ready(instance_id: &str) -> bool {
     let address = SocketAddr::from(([127, 0, 0, 1], 8117));
     let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(300)) else {
         return false;
@@ -27,13 +27,15 @@ fn recorder_is_ready() -> bool {
     if stream.read_to_string(&mut response).is_err() {
         return false;
     }
-    response.contains(" 200 ") && response.contains("\"ok\":true")
+    response.contains(" 200 ")
+        && response.contains("\"ok\":true")
+        && response.contains(&format!("\"instance_id\":\"{instance_id}\""))
 }
 
-fn wait_for_recorder(timeout: Duration) -> bool {
+fn wait_for_recorder(instance_id: &str, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if recorder_is_ready() {
+        if recorder_is_ready(instance_id) {
             return true;
         }
         std::thread::sleep(Duration::from_millis(150));
@@ -45,6 +47,14 @@ fn stop_sidecar(app: &tauri::AppHandle) {
     let state = app.state::<SidecarState>();
     if let Ok(mut guard) = state.0.lock() {
         if let Some(child) = guard.take() {
+            #[cfg(target_os = "macos")]
+            {
+                // PyInstaller one-file sidecar forks a worker; stop it before its bootloader parent.
+                let _ = std::process::Command::new("pkill")
+                    .args(["-TERM", "-P", &child.pid().to_string()])
+                    .status();
+                std::thread::sleep(Duration::from_millis(500));
+            }
             #[cfg(windows)]
             {
                 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -108,6 +118,11 @@ pub fn run() {
                     })
                 })
                 .unwrap_or_default();
+            let instance_id = format!(
+                "{}-{}",
+                std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+            );
             let mut sidecar = app.shell().sidecar("llm-api-proxy-recorder-sidecar")?;
             for key in [
                 "XDG_CONFIG_HOME",
@@ -121,6 +136,7 @@ pub fn run() {
                 );
             }
             sidecar = sidecar
+                .env("LLMPR_DESKTOP_INSTANCE_ID", &instance_id)
                 .env("LLMPR_BUNDLED_OPENCODE", bundled_opencode)
                 .env("XDG_CONFIG_HOME", &config_dir)
                 .env("XDG_DATA_HOME", &data_dir)
@@ -164,7 +180,7 @@ pub fn run() {
                     .build()?;
 
             std::thread::spawn(move || {
-                if wait_for_recorder(Duration::from_secs(60)) {
+                if wait_for_recorder(&instance_id, Duration::from_secs(60)) {
                     if let Ok(url) = url::Url::parse("http://127.0.0.1:8117/__recorder/") {
                         let _ = window.navigate(url);
                     }

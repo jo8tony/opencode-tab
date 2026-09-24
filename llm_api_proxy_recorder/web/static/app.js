@@ -678,6 +678,8 @@ async function renderCallDetail(view, id) {
 }
 
 /* ============================================================ 启动 */
+// 首次进入时写入实际路由，供终端的异步加载判断当前页面。
+if (!location.hash) history.replaceState(null, "", location.pathname + location.search + "#/terminal");
 window.addEventListener("hashchange", route);
 route();
 

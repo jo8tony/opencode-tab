@@ -20,6 +20,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from starlette.websockets import WebSocket
@@ -110,6 +111,43 @@ def detect_shell() -> str:
     return "powershell.exe"
 
 
+@lru_cache(maxsize=1)
+def _macos_login_path() -> str | None:
+    """读取用户终端的 PATH；Finder 启动的桌面应用通常只有系统默认 PATH。"""
+    if sys.platform != "darwin":
+        return None
+    marker = "__LLMPR_LOGIN_PATH__="
+    try:
+        result = subprocess.run(
+            [detect_shell(), "-lic", f'printf "\\n{marker}%s\\n" "$PATH"'],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=3.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in reversed(result.stdout.splitlines()):
+        if line.startswith(marker):
+            return line[len(marker):] or None
+    return None
+
+
+def _macos_command_path() -> str:
+    """合并交互终端路径与常见安装位置，用于查找和启动 CLI。"""
+    paths = []
+    for value in (
+        _macos_login_path(),
+        os.environ.get("PATH", ""),
+        "/opt/homebrew/bin:/usr/local/bin",
+        str(Path.home() / ".local" / "bin"),
+        str(Path.home() / ".opencode" / "bin"),
+        str(Path.home() / ".bun" / "bin"),
+    ):
+        paths.extend(part for part in (value or "").split(os.pathsep) if part)
+    return os.pathsep.join(dict.fromkeys(paths))
+
+
 def resolve_executable(command: str) -> str | None:
     """解析命令到完整可执行路径；找不到返回 None。支持完整路径或 PATH 查找。"""
     command = command.strip()
@@ -118,7 +156,8 @@ def resolve_executable(command: str) -> str | None:
     if os.path.sep in command or (len(command) >= 2 and command[1] == ":"):
         p = Path(command).expanduser()
         return str(p) if p.is_file() else None
-    return shutil.which(command)
+    path = _macos_command_path() if sys.platform == "darwin" else None
+    return shutil.which(command, path=path)
 
 
 def _build_argv(exe: str, args: list[str]) -> list[str]:
@@ -230,6 +269,8 @@ def _restore_user_xdg(env: dict[str, str]) -> None:
 def _build_env(cfg: AppConfig, kind: str) -> dict[str, str]:
     """进程环境：终端变量、OpenCode 临时 provider 配置、用户覆盖。"""
     env = dict(os.environ)
+    if sys.platform == "darwin":
+        env["PATH"] = _macos_command_path()
     env["TERM"] = "xterm-256color"
     env["COLORTERM"] = "truecolor"
     t = cfg.terminal
@@ -303,7 +344,9 @@ def _build_env(cfg: AppConfig, kind: str) -> dict[str, str]:
         # 随应用发布的 OpenCode 必须由应用升级，禁止子进程自行替换版本。
         env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
     for key in list(env):
-        if key == BUNDLED_OPENCODE_ENV or key.startswith(ORIGINAL_XDG_PREFIX):
+        if key in (BUNDLED_OPENCODE_ENV, "LLMPR_DESKTOP_INSTANCE_ID") or key.startswith(
+            ORIGINAL_XDG_PREFIX
+        ):
             env.pop(key, None)
     return env
 

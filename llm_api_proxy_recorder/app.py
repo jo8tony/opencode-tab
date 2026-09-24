@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -111,7 +112,11 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
     # 管理 API（必须先于兜底路由注册：Starlette 按注册顺序匹配）
     @app.get(f"{cfg.server.admin_prefix}/api/ping")
     def ping() -> dict:
-        return {"ok": True}
+        result = {"ok": True}
+        instance_id = os.environ.get("LLMPR_DESKTOP_INSTANCE_ID")
+        if instance_id:
+            result["instance_id"] = instance_id
+        return result
 
     # 管理 API 路由集（ping 之后、兜底代理路由之前）
     app.include_router(admin_router, prefix=f"{cfg.server.admin_prefix}/api")

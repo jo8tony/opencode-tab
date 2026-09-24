@@ -15,6 +15,7 @@ from pathlib import Path
 import httpx
 import pytest
 import uvicorn
+from fastapi.testclient import TestClient
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
@@ -531,6 +532,19 @@ async def test_concurrent_streams(stack):
 
 
 # ================================================= 9. 管理端点
+def test_ping_identifies_desktop_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setenv("LLMPR_DESKTOP_INSTANCE_ID", "test-instance")
+    cfg = AppConfig(
+        upstreams=[UpstreamConfig(name="main", base_url="http://127.0.0.1:9001")],
+        default_upstream="main",
+    )
+    with TestClient(create_app(cfg, str(tmp_path / "config.json"))) as client:
+        assert client.get(f"{ADMIN}/api/ping").json() == {
+            "ok": True,
+            "instance_id": "test-instance",
+        }
+
+
 async def test_admin_ping_meta_settings_get(stack):
     async with httpx.AsyncClient(timeout=30) as client:
         ping = await client.get(f"{stack['proxy']}{ADMIN}/api/ping")
