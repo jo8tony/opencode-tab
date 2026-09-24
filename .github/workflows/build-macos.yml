@@ -1,0 +1,88 @@
+name: Build macOS Installers
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    name: macOS ${{ matrix.arch }} DMG
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            arch: x86_64
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Check runner architecture
+        run: test "$(uname -m)" = "${{ matrix.arch }}"
+
+      - name: Install Python dependencies
+        run: |
+          python -m venv .venv-build
+          .venv-build/bin/python -m pip install --upgrade pip setuptools wheel
+          .venv-build/bin/python -m pip install -e ".[dev,desktop]"
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: .venv-build/bin/python -m pytest tests/ -q
+
+      - name: Build macOS app and DMG
+        run: npm run desktop:build
+
+      - name: Verify macOS package
+        run: |
+          app="src-tauri/target/release/bundle/macos/Sona Code.app"
+          sidecar="$app/Contents/MacOS/llm-api-proxy-recorder-sidecar"
+          desktop="$app/Contents/MacOS/llm-api-proxy-recorder-desktop"
+          test -x "$sidecar"
+          test -x "$desktop"
+          lipo -verify_arch "${{ matrix.arch }}" "$sidecar"
+          lipo -verify_arch "${{ matrix.arch }}" "$desktop"
+          codesign --verify --deep --strict "$app"
+          for dmg in src-tauri/target/release/bundle/dmg/*.dmg; do
+            hdiutil verify "$dmg"
+          done
+
+      - name: Upload macOS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: sona-code-macos-${{ matrix.arch }}
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14

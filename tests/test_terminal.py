@@ -148,7 +148,7 @@ class TestResolve:
         assert resolved.path == str(custom_exe)
         assert resolved.source == "custom"
 
-        custom = make_cfg(command_mode="custom", command="definitely-not-exist-xyz")
+        custom = make_cfg(command_mode="custom", command=str(tmp_path / "missing-opencode.exe"))
         resolved = manager.resolve_opencode(custom)
         assert resolved.path is None
         assert resolved.source == "missing"

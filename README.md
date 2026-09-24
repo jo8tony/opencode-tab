@@ -233,6 +233,8 @@ npm run desktop:build
 
 构建产物位于 `src-tauri/target/release/bundle/`。默认使用 ad-hoc 签名，适合本机测试；公开分发时应在 `src-tauri/tauri.conf.json` 中换用 Developer ID Application 身份，并完成 Apple notarization。
 
+推送到 `main` 分支或在 GitHub Actions 中手动运行 `Build macOS Installers`，会分别在 Apple Silicon 和 Intel 构建机上运行测试、打包，并上传 `sona-code-macos-arm64` 与 `sona-code-macos-x86_64` 两个 artifact。下载对应架构的 artifact 后解压，即可取得 `.dmg` 安装盘。CI 产物沿用 ad-hoc 签名，尚未经过 Apple notarization。
+
 ### Windows 安装包
 
 推送到 `main` 分支会触发 `.github/workflows/build-windows.yml`：在 Windows x64 环境运行测试、构建 PyInstaller sidecar、生成 Tauri NSIS 安装程序，并上传名为 `sona-code-windows-x64` 的 GitHub Actions artifact。
