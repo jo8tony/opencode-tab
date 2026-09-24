@@ -72,8 +72,8 @@ jobs:
           desktop="$app/Contents/MacOS/llm-api-proxy-recorder-desktop"
           test -x "$sidecar"
           test -x "$desktop"
-          lipo -verify_arch "${{ matrix.arch }}" "$sidecar"
-          lipo -verify_arch "${{ matrix.arch }}" "$desktop"
+          lipo "$sidecar" -verify_arch "${{ matrix.arch }}"
+          lipo "$desktop" -verify_arch "${{ matrix.arch }}"
           codesign --verify --deep --strict "$app"
           for dmg in src-tauri/target/release/bundle/dmg/*.dmg; do
             hdiutil verify "$dmg"
