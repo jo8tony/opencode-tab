@@ -35,11 +35,11 @@ function renderTerminal(view) {
         api("terminal/projects"),
       ]);
     } catch (e) {
-      if (loadId !== terminalLoadId || location.hash !== "#/terminal") return;
+      if (loadId !== terminalLoadId || (location.hash || "#/terminal") !== "#/terminal") return;
       view.replaceChildren(errorCard("加载终端失败：" + (e.detail ? format422(e.detail) : e.message), () => route()));
       return;
     }
-    if (loadId !== terminalLoadId || location.hash !== "#/terminal" || !view.isConnected) return;
+    if (loadId !== terminalLoadId || (location.hash || "#/terminal") !== "#/terminal" || !view.isConnected) return;
 
     TERM = {
       adminPrefix: meta.admin_prefix || "/__recorder",
@@ -529,10 +529,10 @@ function openCreateModal(project = null) {
   });
   if (project) cwdInput.value = project.path;
 
-  // 目录浏览器（懒加载子目录）
+  // 桌面版使用系统对话框；普通浏览器保留页内目录浏览器。
   const browser = el("div", { class: "term-browser hidden" });
   let browserLoaded = false;
-  const toggleBtn = el("button", { class: "btn btn-xs", type: "button", text: "浏览目录…", onclick: async () => {
+  const browseInPage = async () => {
     if (browser.classList.contains("hidden")) {
       browser.classList.remove("hidden");
       toggleBtn.textContent = "收起浏览";
@@ -541,7 +541,26 @@ function openCreateModal(project = null) {
       browser.classList.add("hidden");
       toggleBtn.textContent = "浏览目录…";
     }
-  } });
+  };
+  const nativeDialog = window.__TAURI__?.dialog;
+  const toggleBtn = el("button", { class: "btn btn-xs", type: "button",
+    text: nativeDialog?.open ? "选择目录…" : "浏览目录…", onclick: async () => {
+      if (!nativeDialog?.open) { await browseInPage(); return; }
+      toggleBtn.disabled = true;
+      try {
+        const options = { directory: true, multiple: false, title: "选择项目目录" };
+        if (cwdInput.value.trim()) options.defaultPath = cwdInput.value.trim();
+        const selected = await nativeDialog.open(options);
+        if (selected && mask.isConnected) {
+          cwdInput.value = selected;
+          errLine.textContent = "";
+        }
+      } catch (e) {
+        if (mask.isConnected) errLine.textContent = "选择目录失败：" + (e.message || String(e));
+      } finally {
+        toggleBtn.disabled = false;
+      }
+    } });
 
   async function loadFs(path) {
     let r;

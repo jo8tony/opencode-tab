@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "terminal-directory-dialog",
+  "description": "Allow the local terminal page to open a native directory picker",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:8117/__recorder/*"]
+  },
+  "permissions": ["dialog:allow-open"]
+}
