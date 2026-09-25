@@ -207,8 +207,20 @@
 .wsp-command-menu { width: min(430px, calc(100vw - 330px)); max-height: 340px; overflow: auto; padding: 5px; }
 .wsp-command-heading { padding: 6px 8px 7px; color: var(--text-faint); font-size: 10px; font-weight: 700; }
 .wsp-command-option { width: 100%; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 0; border-radius: 7px; background: transparent; color: var(--text); text-align: left; font-size: 11px; }
+.wsp-command-option.selected, .wsp-command-option[aria-selected="true"] { background: #edf3ff; }
 .wsp-command-option strong { color: var(--accent); font: 11px var(--mono); }
 .wsp-command-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: 10.5px; }
+.wsp-attachment-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px 4px; border-bottom: 1px solid #f1f3f7; }
+.wsp-attachment-list[hidden], .wsp-stats[hidden] { display: none; }
+.wsp-attachment { position: relative; width: 94px; display: grid; gap: 4px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: #fbfcfe; }
+.wsp-attachment img { width: 82px; height: 62px; object-fit: contain; border-radius: 4px; background: #f2f4f7; }
+.wsp-attachment span { overflow: hidden; color: var(--text-dim); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.wsp-attachment button { position: absolute; top: 1px; right: 1px; width: 21px; height: 21px; display: grid; place-items: center; border: 1px solid #d7dce5; border-radius: 50%; background: rgba(255,255,255,.95); color: var(--text-dim); font-size: 15px; line-height: 1; cursor: pointer; }
+.wsp-attach { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--text-dim); cursor: pointer; }
+.wsp-attach:hover { background: #f2f6ff; color: var(--accent); }
+.wsp-attach svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.wsp-stats { max-width: 870px; min-height: 17px; margin: 7px auto 0; overflow: hidden; color: var(--text-faint); font: 10px/1.5 var(--sans); text-overflow: ellipsis; white-space: nowrap; }
+.wsp-stat-context { color: #60769a; font-weight: 650; }
 .wsp-message-error { margin: 7px 0 12px; padding: 12px 14px; border: 1px solid #efcecc; border-radius: 9px; background: #fff7f6; color: #8e3632; font-size: 11.5px; }
 .wsp-message-error strong { display: block; font-size: 12px; }
 .wsp-message-error p { margin: 5px 0; }
