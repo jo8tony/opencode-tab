@@ -68,6 +68,18 @@ function renderWorkspace(view) {
   const agentPicker = view.querySelector("#wsp-agent-picker");
   const agentLabel = view.querySelector("#wsp-agent-label");
   const variantSelect = view.querySelector("#wsp-variant");
+  const variantTrigger = el("button", {
+    class: "wsp-variant-trigger", id: "wsp-variant-trigger", type: "button",
+    "aria-haspopup": "menu", "aria-expanded": "false", hidden: true,
+  }, el("span", { id: "wsp-variant-label", text: "默认" }),
+  el("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" },
+    el("path", { d: "m6 9 6 6 6-6" })));
+  const variantLabel = variantTrigger.querySelector("#wsp-variant-label");
+  const variantPicker = el("div", {
+    class: "wsp-agent-picker wsp-variant-picker", id: "wsp-variant-picker",
+    role: "menu", "aria-label": "选择模型强度", hidden: true,
+  });
+  variantSelect.before(variantTrigger, variantPicker);
   const commandMenu = view.querySelector("#wsp-command-menu");
   const actionMenu = view.querySelector("#wsp-action-menu");
   const moreButton = view.querySelector("#wsp-more");
@@ -122,8 +134,7 @@ function renderWorkspace(view) {
   }
 
   function statusIcon(kind) {
-    const icon = el("svg", { class: "wsp-status-icon", viewBox: "0 0 20 20", "aria-hidden": "true" },
-      el("circle", { class: "wsp-status-track", cx: "10", cy: "10", r: "7.25" }));
+    const icon = el("svg", { class: "wsp-status-icon", viewBox: "0 0 20 20", "aria-hidden": "true" });
     if (kind === "busy") {
       icon.append(el("g", { class: "wsp-status-spinner" },
         el("circle", { cx: "10", cy: "10", r: "7.25", "stroke-dasharray": "12 34" })));
@@ -1048,11 +1059,17 @@ function renderWorkspace(view) {
         el("path", { d: "m6 9 6 6 6-6" })));
     modelButton.title = model ? `${provider.id} / ${choice.model_id}` : "由 OpenCode 选择默认模型";
     const variants = Object.keys(model?.variants || {});
-    variantSelect.replaceChildren(el("option", { value: "", text: "默认强度" }),
+    variantSelect.replaceChildren(el("option", { value: "", text: "默认" }),
       ...variants.map((variant) => el("option", { value: variant, text: variant })));
-    variantSelect.hidden = !variants.length;
+    variantSelect.hidden = true;
     const chosen = state.chosenVariants.get(state.projectId) || "";
     variantSelect.value = variants.includes(chosen) ? chosen : "";
+    variantTrigger.hidden = !variants.length;
+    variantLabel.textContent = variantSelect.value || "默认";
+    variantTrigger.dataset.default = String(!variantSelect.value);
+    variantTrigger.title = variantSelect.value ? "模型推理强度：" + variantSelect.value : "模型推理强度：默认";
+    if (!variants.length) closeVariantPicker();
+    else if (!variantPicker.hidden) renderVariantPicker();
   }
 
   function closeModelPicker() {
@@ -1075,6 +1092,34 @@ function renderWorkspace(view) {
     agentTrigger.setAttribute("aria-expanded", "false");
   }
 
+  function closeVariantPicker() {
+    variantPicker.hidden = true;
+    variantTrigger.setAttribute("aria-expanded", "false");
+  }
+
+  function renderVariantPicker() {
+    variantPicker.replaceChildren(...Array.from(variantSelect.options, (option) =>
+      el("button", { type: "button", role: "menuitemradio", class: "wsp-agent-option" +
+        (option.value === variantSelect.value ? " selected" : ""),
+      "aria-checked": option.value === variantSelect.value ? "true" : "false",
+      text: option.value || "默认", onclick: () => {
+        variantSelect.value = option.value;
+        variantSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        closeVariantPicker();
+        variantTrigger.focus();
+      } })));
+    if (!variantPicker.hidden) positionPicker(variantPicker, variantTrigger);
+  }
+
+  function openVariantPicker() {
+    closeModelPicker();
+    closeAgentPicker();
+    hideAutocomplete();
+    variantPicker.hidden = false;
+    variantTrigger.setAttribute("aria-expanded", "true");
+    renderVariantPicker();
+  }
+
   function renderAgentPicker() {
     agentLabel.textContent = agentSelect.selectedOptions[0]?.textContent || "Build · 执行";
     agentPicker.replaceChildren(...Array.from(agentSelect.options, (option) =>
@@ -1092,6 +1137,7 @@ function renderWorkspace(view) {
 
   function openAgentPicker() {
     closeModelPicker();
+    closeVariantPicker();
     hideAutocomplete();
     agentPicker.hidden = false;
     agentTrigger.setAttribute("aria-expanded", "true");
@@ -1186,6 +1232,7 @@ function renderWorkspace(view) {
   function openModelPicker() {
     if (!state.projectId) return;
     closeAgentPicker();
+    closeVariantPicker();
     hideAutocomplete();
     modelPicker.hidden = false;
     modelButton.setAttribute("aria-expanded", "true");
@@ -1632,12 +1679,23 @@ function renderWorkspace(view) {
   addCleanup(() => window.removeEventListener("resize", updateSidebarButton));
   modelButton.addEventListener("click", () => modelPicker.hidden ? openModelPicker() : closeModelPicker());
   agentTrigger.addEventListener("click", () => agentPicker.hidden ? openAgentPicker() : closeAgentPicker());
+  variantTrigger.addEventListener("click", () => variantPicker.hidden ? openVariantPicker() : closeVariantPicker());
   agentTrigger.addEventListener("keydown", (event) => {
     if (event.key === "ArrowDown" && agentPicker.hidden) { event.preventDefault(); openAgentPicker(); agentPicker.querySelector("button")?.focus(); }
     else if (event.key === "Escape") closeAgentPicker();
   });
   agentPicker.addEventListener("keydown", (event) => {
     if (event.key === "Escape") { closeAgentPicker(); agentTrigger.focus(); }
+  });
+  variantTrigger.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" && variantPicker.hidden) {
+      event.preventDefault();
+      openVariantPicker();
+      variantPicker.querySelector("button")?.focus();
+    } else if (event.key === "Escape") closeVariantPicker();
+  });
+  variantPicker.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { closeVariantPicker(); variantTrigger.focus(); }
   });
   view.querySelector("#wsp-model-close").addEventListener("click", closeModelPicker);
   modelSearch.addEventListener("input", renderModelPicker);
@@ -1647,6 +1705,7 @@ function renderWorkspace(view) {
   const outsidePicker = (event) => {
     if (!modelPicker.hidden && !modelPicker.contains(event.target) && event.target !== modelButton) closeModelPicker();
     if (!agentPicker.hidden && !agentPicker.contains(event.target) && event.target !== agentTrigger) closeAgentPicker();
+    if (!variantPicker.hidden && !variantPicker.contains(event.target) && event.target !== variantTrigger) closeVariantPicker();
   };
   document.addEventListener("pointerdown", outsidePicker);
   addCleanup(() => document.removeEventListener("pointerdown", outsidePicker));
@@ -1657,11 +1716,16 @@ function renderWorkspace(view) {
   const repositionPickers = () => {
     if (!modelPicker.hidden) positionPicker(modelPicker, modelButton, "right");
     if (!agentPicker.hidden) positionPicker(agentPicker, agentTrigger);
+    if (!variantPicker.hidden) positionPicker(variantPicker, variantTrigger);
   };
   window.addEventListener("resize", repositionPickers);
   addCleanup(() => window.removeEventListener("resize", repositionPickers));
   variantSelect.addEventListener("change", () => {
     if (state.projectId) state.chosenVariants.set(state.projectId, variantSelect.value);
+    variantLabel.textContent = variantSelect.value || "默认";
+    variantTrigger.dataset.default = String(!variantSelect.value);
+    variantTrigger.title = variantSelect.value ? "模型推理强度：" + variantSelect.value : "模型推理强度：默认";
+    renderVariantPicker();
   });
   view.querySelectorAll(".wsp-tab").forEach((button) => button.addEventListener("click", () => {
     state.tab = button.dataset.wspTab;

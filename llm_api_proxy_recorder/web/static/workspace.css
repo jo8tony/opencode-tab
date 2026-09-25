@@ -498,6 +498,7 @@
 .wsp-model-picker { width: min(420px, calc(100vw - 24px)); max-height: min(510px, 65vh); overflow: hidden; }
 .wsp-agent-picker { width: min(170px, calc(100vw - 24px)); padding: 5px; }
 .wsp-model-picker[hidden], .wsp-agent-picker[hidden] { display: none; }
+.wsp-variant-picker { width: min(132px, calc(100vw - 24px)); }
 .wsp-agent-option { width: 100%; padding: 9px 10px; display: block; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; font-size: 11px; cursor: pointer; }
 .wsp-agent-option:hover, .wsp-agent-option.selected { background: var(--accent-soft); color: #2357b5; }
 @media (max-width: 700px) { .wsp-agent-trigger { max-width: 100px; } }
@@ -517,10 +518,18 @@
 .wsp-status.attention { border-color: #f0dfbc; background: #fff9ed; color: #a66817; }
 .wsp-status.error { border-color: #efcecc; background: #fff5f4; color: var(--red); }
 .wsp-status-icon { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.wsp-status-track { opacity: .32; }
 .wsp-status-mark { stroke-width: 2.2; }
 .wsp-status-spinner { transform-box: view-box; transform-origin: 10px 10px; animation: wsp-spin 1.1s linear infinite; will-change: transform; backface-visibility: hidden; }
 .wsp-status-spinner circle { stroke-width: 2.3; }
+.wsp-composer-hint { white-space: nowrap; }
+.wsp-variant-trigger { height: 31px; min-width: 0; max-width: 86px; padding: 0 5px; display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 6px; background: transparent; color: var(--text-dim); font-size: 11px; white-space: nowrap; cursor: pointer; }
+.wsp-variant-trigger:hover, .wsp-variant-trigger[aria-expanded="true"] { background: #f2f6ff; }
+.wsp-variant-trigger[data-default="true"] { color: var(--text-faint); }
+.wsp-variant-trigger[hidden] { display: none; }
+.wsp-variant-trigger span { overflow: hidden; text-overflow: ellipsis; }
+.wsp-variant-trigger svg { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 1000px) { .wsp-composer-hint { display: none; } }
+@media (max-width: 700px) { .wsp-variant-trigger { max-width: 76px; } }
 @keyframes wsp-spin { to { transform: rotate(360deg); } }
 .wsp-command-menu .wsp-file-option strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px var(--mono); }
 .wsp-command-menu .wsp-file-option span { flex: none; color: var(--text-faint); font-size: 10px; }
