@@ -13,36 +13,39 @@ function renderWorkspace(view) {
   let composingInput = false;
   let lastSessionListRefresh = 0;
   const state = {
-    projects: [], sessions: new Map(), errors: new Map(),
+    projects: [], sessions: new Map(), sessionDetails: new Map(), errors: new Map(),
     projectId: workspaceSelection.projectId, sessionId: workspaceSelection.sessionId,
     messages: [], permissions: [], questions: [], questionDrafts: new Map(), questionPages: new Map(),
-    questionErrors: new Map(), diffs: [], statuses: {},
+    questionErrors: new Map(), diffs: [], todos: [], children: [], statuses: {},
     check: null, tab: "chat", search: "", sending: false, chosenModels: new Map(),
-    chosenAgents: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], modelLoadError: "",
+    chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], modelLoadError: "",
     collapsedProjects: new Set(), expandedTools: new Map(), pendingAction: "", actionError: "",
   };
 
   view.innerHTML = `
     <section class="wsp" id="wsp">
       <aside class="wsp-side" aria-label="项目与对话">
-        <div class="wsp-brand"><img class="wsp-brand-mark" src="sona-code-icon.png" alt="" width="34" height="34"><span class="wsp-brand-copy"><strong>Sona Code</strong><small>桌面工作区</small></span></div>
+        <div class="wsp-brand"><img class="wsp-brand-mark" src="sona-code-icon.png" alt="" width="34" height="34"><span class="wsp-brand-copy"><strong>Sona Code</strong><small>桌面工作区</small></span><button class="wsp-side-close" id="wsp-side-close" type="button" aria-label="关闭项目栏">×</button></div>
         <div class="wsp-side-top">
-          <div class="wsp-side-actions"><button class="wsp-new" id="wsp-new" type="button">＋ 新建对话</button><button class="wsp-add" id="wsp-add" type="button" title="添加项目" aria-label="添加项目">＋</button></div>
+          <div class="wsp-side-actions"><button class="wsp-new" id="wsp-new" type="button">＋ 新建对话</button></div>
           <label class="wsp-search-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input class="wsp-search" id="wsp-search" type="search" placeholder="搜索项目和对话" aria-label="搜索项目和对话"><kbd>⌘K</kbd></label>
         </div>
-        <div class="wsp-side-list"><div class="wsp-side-label"><span>项目与对话</span><span id="wsp-project-count"></span></div><div id="wsp-projects"></div></div>
+        <div class="wsp-side-list"><div class="wsp-side-label"><span>项目与对话</span><span class="wsp-side-label-actions"><span id="wsp-project-count"></span><button class="wsp-add" id="wsp-add" type="button" title="添加项目" aria-label="添加项目">＋</button></span></div><div id="wsp-projects"></div></div>
         <div class="wsp-side-bottom" id="wsp-connection">正在检查 OpenCode…</div>
       </aside>
+      <div class="wsp-side-scrim" id="wsp-side-scrim"></div>
       <div class="wsp-main">
-        <nav class="wsp-global-nav" aria-label="主导航"><a class="active" href="#/workspace">工作区</a><a href="#/trajectory">轨迹</a><a href="#/calls">调用列表</a><a href="#/dashboard">仪表盘</a><a href="#/settings">设置</a><span class="wsp-nav-spacer"></span><span class="wsp-nav-note">代理观测与开发对话</span></nav>
-        <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" hidden>停止任务</button><span class="wsp-status" id="wsp-status">准备中</span></header>
-        <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button></nav>
+        <nav class="wsp-global-nav" aria-label="主导航"><a class="active" href="#/workspace">工作区</a><a href="#/terminal">OpenCode 终端</a><a href="#/trajectory">轨迹</a><a href="#/calls">调用列表</a><a href="#/dashboard">仪表盘</a><a href="#/settings">设置</a><span class="wsp-nav-spacer"></span><span class="wsp-nav-note">代理观测与开发对话</span></nav>
+        <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" hidden>停止任务</button><span class="wsp-status" id="wsp-status">准备中</span><div class="wsp-session-actions"><button class="wsp-more" id="wsp-more" type="button" aria-label="对话操作" aria-haspopup="menu" aria-expanded="false" hidden>···</button><div class="wsp-action-menu" id="wsp-action-menu" role="menu" hidden></div></div></header>
+        <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
-        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><textarea class="wsp-input" id="wsp-input" placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" rows="2"></textarea><div class="wsp-composer-bottom"><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">模型 · 自动选择</button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent"><option value="">Build</option></select><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-composer-note">输入 / 查看命令；输入 ! 在项目目录运行命令。OpenCode 可读写文件，请核对权限请求。</div></div>
+        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><textarea class="wsp-input" id="wsp-input" placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" rows="2"></textarea><div class="wsp-composer-bottom"><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent"><option value="">Build</option></select><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-composer-note">输入 / 查看命令 · 输入 ! 运行命令 · 请核对权限请求</div></div>
       </div>
     </section>`;
 
   const root = view.querySelector("#wsp");
+  try { if (localStorage.getItem("sona-code:sidebar-collapsed") === "1") root.classList.add("side-collapsed"); }
+  catch (_) { /* Storage may be unavailable. */ }
   const sideList = view.querySelector("#wsp-projects");
   const content = view.querySelector("#wsp-content");
   const scroll = view.querySelector("#wsp-scroll");
@@ -52,7 +55,10 @@ function renderWorkspace(view) {
   const modelSearch = view.querySelector("#wsp-model-search");
   const modelList = view.querySelector("#wsp-model-list");
   const agentSelect = view.querySelector("#wsp-agent");
+  const variantSelect = view.querySelector("#wsp-variant");
   const commandMenu = view.querySelector("#wsp-command-menu");
+  const actionMenu = view.querySelector("#wsp-action-menu");
+  const moreButton = view.querySelector("#wsp-more");
   const sessionPath = (projectId, sessionId) =>
     `workspace/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}`;
   const alive = () => !disposed && view.isConnected && (!location.hash || location.hash === "#/workspace");
@@ -66,7 +72,8 @@ function renderWorkspace(view) {
 
   function activeProject() { return state.projects.find((item) => item.id === state.projectId); }
   function activeSession() {
-    return (state.sessions.get(state.projectId) || []).find((item) => item.id === state.sessionId);
+    return state.sessionDetails.get(state.sessionId) ||
+      (state.sessions.get(state.projectId) || []).find((item) => item.id === state.sessionId);
   }
   function sessionTitle(session) {
     const title = session?.title || "";
@@ -83,29 +90,147 @@ function renderWorkspace(view) {
     const day = sameDay(date, today) ? "今天" : sameDay(date, yesterday) ? "昨天" : date.toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
     return `更新于${day} ${date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
   }
+  function shortStamp(session) {
+    const value = session?.time?.updated || session?.time?.created;
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+  function messageDay(message) {
+    const date = new Date(message?.info?.time?.created || message?.info?.time?.updated || Date.now());
+    if (Number.isNaN(date.getTime())) return "今天";
+    const today = new Date();
+    const sameDay = date.toDateString() === today.toDateString();
+    return sameDay ? "今天" : date.toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
+  }
+  function eventTime(value) {
+    const date = new Date(value || Date.now());
+    return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  }
+  function toolDuration(part) {
+    const time = part.state?.time || {};
+    if (!time.start || !time.end) return "";
+    const seconds = (new Date(time.end) - new Date(time.start)) / 1000;
+    return Number.isFinite(seconds) && seconds >= 0 ? `${seconds.toFixed(1)} 秒` : "";
+  }
   function detail(error) { return error?.detail ? format422(error.detail) : error?.message || String(error); }
+
+  function updateSidebarButton() {
+    const mobile = window.matchMedia("(max-width: 700px)").matches;
+    const expanded = mobile ? root.classList.contains("show-side") : !root.classList.contains("side-collapsed");
+    const button = view.querySelector("#wsp-menu");
+    button.setAttribute("aria-label", expanded ? "收起项目栏" : "展开项目栏");
+    button.setAttribute("aria-expanded", String(expanded));
+  }
+
+  function closeActionMenu() {
+    actionMenu.hidden = true;
+    moreButton.setAttribute("aria-expanded", "false");
+  }
+
+  function renderActionMenu() {
+    const session = activeSession();
+    actionMenu.replaceChildren();
+    if (!session) return;
+    const actions = [
+      ["重命名对话", "rename"], ["从此处创建分支", "fork"], ["压缩上下文", "summarize"],
+    ];
+    actions.push(["删除对话", "delete"]);
+    for (const [label, action] of actions) {
+      actionMenu.append(el("button", { type: "button", role: "menuitem",
+        class: action === "delete" ? "danger" : "", text: label,
+        onclick: () => { closeActionMenu(); performSessionAction(action); } }));
+    }
+  }
+
+  function openRenameDialog(session) {
+    const titleInput = el("input", { type: "text", value: sessionTitle(session), maxlength: "200" });
+    const errorLine = el("p", { class: "wsp-question-error" });
+    const mask = el("div", { class: "wsp-modal-mask" },
+      el("div", { class: "wsp-modal", role: "dialog", "aria-modal": "true", "aria-label": "重命名对话" },
+        el("h2", { text: "重命名对话" }), titleInput, errorLine,
+        el("div", { class: "wsp-modal-actions" },
+          el("button", { class: "wsp-mini", type: "button", text: "取消", onclick: () => mask.remove() }),
+          el("button", { class: "wsp-mini primary", type: "button", text: "保存", onclick: async () => {
+            const title = titleInput.value.trim();
+            if (!title) { errorLine.textContent = "请输入对话名称"; return; }
+            try {
+              const updated = await api(`${sessionPath(state.projectId, session.id)}`, {
+                method: "PATCH", body: { title }, silent: true,
+              });
+              state.sessionDetails.set(session.id, updated);
+              mask.remove();
+              await loadSessions(activeProject());
+              renderHeader();
+            } catch (error) { errorLine.textContent = detail(error); }
+          } }))));
+    mask.addEventListener("click", (event) => { if (event.target === mask) mask.remove(); });
+    document.body.append(mask);
+    titleInput.focus(); titleInput.select();
+  }
+
+  async function performSessionAction(action) {
+    const session = activeSession();
+    if (!session) return;
+    const base = sessionPath(state.projectId, session.id);
+    if (action === "rename") { openRenameDialog(session); return; }
+    if (action === "delete" && !window.confirm(`删除“${sessionTitle(session)}”及其全部消息？此操作无法撤销。`)) return;
+    try {
+      if (action === "fork") {
+        const fork = await api(`${base}/fork`, { method: "POST", body: {}, silent: true });
+        await loadSessions(activeProject());
+        selectSession(state.projectId, fork.id);
+        return;
+      }
+      if (action === "delete") {
+        await api(base, { method: "DELETE", silent: true });
+        state.sessionDetails.delete(session.id);
+        state.sessionId = null;
+        workspaceSelection.sessionId = null;
+        await loadSessions(activeProject());
+        renderHeader(); renderMain();
+        return;
+      }
+      if (action === "summarize") {
+        const chosen = selectedModel();
+        const last = [...state.messages].reverse().find((message) => message.info?.role === "assistant")?.info;
+        const provider_id = chosen.provider_id || last?.providerID;
+        const model_id = chosen.model_id || last?.modelID;
+        if (!provider_id || !model_id) { toast("请先选择模型", "error"); openModelPicker(); return; }
+        await api(`${base}/summarize`, { method: "POST", body: { provider_id, model_id }, silent: true });
+      }
+      await refreshSelected();
+      renderHeader();
+    } catch (error) { toast(`对话操作失败：${detail(error)}`, "error"); }
+  }
 
   function renderSidebar() {
     sideList.replaceChildren();
     view.querySelector("#wsp-project-count").textContent = `${state.projects.length} 个项目`;
     const query = state.search.trim().toLocaleLowerCase();
+    let visible = 0;
     for (const project of state.projects) {
       const all = state.sessions.get(project.id);
-      const sessions = (all || []).filter((session) => !query || sessionTitle(session).toLocaleLowerCase().includes(query));
-      if (query && !project.name.toLocaleLowerCase().includes(query) && !sessions.length) continue;
+      const projectMatches = project.name.toLocaleLowerCase().includes(query);
+      const sessions = (all || []).filter((session) => !query || projectMatches || sessionTitle(session).toLocaleLowerCase().includes(query));
+      if (query && !projectMatches && !sessions.length) continue;
+      visible++;
       const collapsed = state.collapsedProjects.has(project.id) && !query;
       const section = el("section", { class: "wsp-project" + (collapsed ? " collapsed" : "") });
       const heading = el("button", { class: "wsp-project-head", type: "button", title: project.path,
-        onclick: () => selectProject(project.id) },
+        "aria-expanded": String(!collapsed), onclick: () => {
+          if (collapsed) {
+            state.collapsedProjects.delete(project.id);
+            if (!all) loadSessions(project);
+          } else state.collapsedProjects.add(project.id);
+          renderSidebar();
+        } },
         el("span", { class: "wsp-project-mark", text: (project.name || "P").slice(0, 2).toUpperCase() }),
         el("span", { class: "wsp-project-name", text: project.name }),
-        el("span", { class: "wsp-project-count", text: all ? String(all.length) : "…" }));
-      const chevron = el("button", { class: "wsp-project-toggle", type: "button", title: collapsed ? "展开对话" : "收起对话", "aria-label": `${collapsed ? "展开" : "收起"}${project.name}的对话`, "aria-expanded": String(!collapsed), onclick: () => {
-        if (collapsed) state.collapsedProjects.delete(project.id);
-        else state.collapsedProjects.add(project.id);
-        renderSidebar();
-      } }, el("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, el("path", { d: "m6 9 6 6 6-6" })));
-      section.append(el("div", { class: "wsp-project-row" }, heading, chevron));
+        el("span", { class: "wsp-project-count", text: all ? String(all.length) : "…" }),
+        el("svg", { class: "wsp-project-chevron", viewBox: "0 0 16 16", "aria-hidden": "true" }, el("path", { d: "m4 6 4 4 4-4" })));
+      section.append(heading);
       const threads = el("div", { class: "wsp-threads" });
       if (state.errors.has(project.id)) {
         threads.append(el("div", { class: "wsp-error", text: state.errors.get(project.id) }));
@@ -116,16 +241,20 @@ function renderWorkspace(view) {
       }
       for (const session of sessions) {
         threads.append(el("button", {
-          class: "wsp-thread" + (project.id === state.projectId && session.id === state.sessionId ? " active" : ""),
+          class: "wsp-thread" + (session.parentID ? " child" : "") +
+            (project.id === state.projectId && session.id === state.sessionId ? " active" : ""),
           type: "button", title: sessionTitle(session),
           onclick: () => selectSession(project.id, session.id),
-        }, el("span", { class: "wsp-thread-title", text: sessionTitle(session) }),
-        el("span", { class: "wsp-thread-time", title: "对话最后更新时间", text: stamp(session) })));
+        }, el("span", { class: "wsp-thread-line" },
+          el("span", { class: "wsp-thread-title", text: `${session.parentID ? "↳ " : ""}${sessionTitle(session)}` }),
+          el("span", { class: "wsp-thread-time", title: "对话最后更新时间", text: shortStamp(session) })),
+        el("span", { class: "wsp-thread-preview", text: stamp(session) })));
       }
       section.append(threads);
       sideList.append(section);
     }
-    if (!state.projects.length) sideList.append(el("div", { class: "wsp-empty", style: "min-height:200px" },
+    if (query && !visible) sideList.append(el("p", { class: "wsp-empty-search", text: "没有找到匹配的项目或对话。" }));
+    else if (!state.projects.length) sideList.append(el("div", { class: "wsp-empty", style: "min-height:200px" },
       el("p", { text: "还没有项目。点击上方 ＋ 添加项目目录。" })));
   }
 
@@ -143,6 +272,8 @@ function renderWorkspace(view) {
     label.className = "wsp-status" + (failed ? " error" : state.sending || status?.type === "busy" ? " busy" : pending ? " attention" : "");
     label.textContent = failed ? "请求失败" : state.sending || status?.type === "busy" ? "正在处理" : pending ? "等待确认" : state.check?.found ? "已就绪" : "未检测到 OpenCode";
     view.querySelector("#wsp-abort").hidden = status?.type !== "busy";
+    moreButton.hidden = !session;
+    if (!session) closeActionMenu();
     view.querySelectorAll(".wsp-tab").forEach((button) => button.classList.toggle("active", button.dataset.wspTab === state.tab));
     view.querySelector("#wsp-send").disabled = state.sending || !project || !state.check?.found;
     view.querySelector("#wsp-new").disabled = !state.projects.length || !state.check?.found;
@@ -156,7 +287,12 @@ function renderWorkspace(view) {
     return box;
   }
 
-  function textPart(part) { return el("div", { class: "wsp-part wsp-text", text: part.text || "" }); }
+  function textPart(part, role) {
+    const node = el("div", { class: "wsp-part wsp-text" });
+    if (role === "user") node.textContent = part.text || "";
+    else node.append(trjMarkdown(part.text || ""));
+    return node;
+  }
   function messageError(info) {
     const error = info?.error;
     if (!error) return null;
@@ -210,6 +346,38 @@ function renderWorkspace(view) {
       el("pre", { text: (output || "等待结果…").slice(0, 12000) }));
     card.append(body);
     return card;
+  }
+
+  function toolGroup(parts) {
+    const finished = parts.every((part) => part.state?.status === "completed");
+    const group = el("div", { class: "wsp-tool-group" },
+      el("div", { class: "wsp-tool-group-head" },
+        el("span", { class: "wsp-tool-symbol", text: "›_" }),
+        el("strong", { text: finished ? "已完成的步骤" : "工具操作" }),
+        el("span", { class: "wsp-tool-group-count", text: `${parts.length} 项活动` })));
+    for (const part of parts) {
+      const status = part.state?.status || "running";
+      const labels = { read: "读取文件", write: "写入文件", edit: "编辑文件", bash: "运行命令", glob: "查找文件", grep: "搜索内容", list: "列出目录", task: "执行任务" };
+      const name = labels[part.tool] || part.tool || "工具操作";
+      const subject = part.state?.input?.filePath || part.state?.input?.path || part.state?.input?.command || part.state?.input?.description || "";
+      const row = el("details", { class: `wsp-tool-step ${status}` },
+        el("summary", {},
+          el("span", { class: "wsp-step-check", text: status === "completed" ? "✓" : status === "error" ? "!" : "◉" }),
+          el("span", { class: "wsp-step-label", text: subject ? `${name} · ${subject}` : name }),
+          el("span", { class: "wsp-step-duration", text: toolDuration(part) || (status === "running" ? "运行中" : status === "error" ? "失败" : "") })));
+      const key = `step:${part.id || part.callID || `${name}:${subject}`}`;
+      if (state.expandedTools.get(key)) row.open = true;
+      row.addEventListener("toggle", () => state.expandedTools.set(key, row.open));
+      const inputText = part.state?.input ? JSON.stringify(part.state.input, null, 2) : "";
+      const rawOutput = part.state?.output || part.state?.error || "";
+      const output = typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput, null, 2);
+      row.append(el("div", { class: "wsp-tool-step-detail" },
+        ...(inputText ? [el("strong", { text: "输入" }), el("pre", { text: inputText.slice(0, 4000) })] : []),
+        el("strong", { text: part.state?.error ? "错误" : "结果" }),
+        el("pre", { text: (output || "等待结果…").slice(0, 12000) })));
+      group.append(row);
+    }
+    return group;
   }
 
   function questionCard(request) {
@@ -326,29 +494,66 @@ function renderWorkspace(view) {
       if (state.actionError) content.append(el("div", { class: "wsp-error", text: state.actionError }));
       return;
     }
+    const displayMessages = [];
     for (const message of state.messages) {
+      const previous = displayMessages.at(-1);
+      if (message.info?.role === "assistant" && previous?.info?.role === "assistant" &&
+          message.info.parentID && previous.info.parentID === message.info.parentID) {
+        previous.parts.push(...(message.parts || []));
+        if (message.info.error) previous.errorInfo = message.info;
+        previous.modelInfo = message.info;
+      } else displayMessages.push({ info: message.info, parts: [...(message.parts || [])],
+        errorInfo: message.info?.error ? message.info : null, modelInfo: message.info });
+    }
+    let previousDay = "";
+    for (const message of displayMessages) {
+      const day = messageDay(message);
+      if (day !== previousDay) {
+        content.append(el("div", { class: "wsp-date-divider", text: day }));
+        previousDay = day;
+      }
       const role = message?.info?.role || "assistant";
       const row = el("article", { class: "wsp-message " + (role === "user" ? "user" : "assistant") });
-      if (role !== "user") row.append(el("div", { class: "wsp-avatar" }, el("img", { src: "sona-code-icon.png", alt: "", width: "22", height: "22" })));
+      if (role !== "user") row.append(el("img", { class: "wsp-avatar", src: "sona-code-icon.png", alt: "", width: 30, height: 30 }));
       const body = el("div", { class: "wsp-message-inner" });
+      const modelInfo = message.modelInfo || message.info;
       if (role !== "user") body.append(el("div", { class: "wsp-message-meta" },
         el("strong", { text: "Sona" }),
-        `OpenCode${message.info?.providerID && message.info?.modelID ? ` · ${message.info.providerID} / ${message.info.modelID}` : ""}`));
+        `OpenCode${modelInfo?.providerID && modelInfo?.modelID ? ` · ${modelInfo.providerID} / ${modelInfo.modelID}` : ""}`));
       const parts = message.parts || [];
-      const error = role !== "user" ? messageError(message.info) : null;
+      const error = role !== "user" ? messageError(message.errorInfo) : null;
       if (error) body.append(error);
       else if (role !== "user" && !parts.length) {
         const busy = state.statuses?.[state.sessionId]?.type === "busy";
         body.append(el("div", { class: busy ? "wsp-thinking" : "wsp-no-response", text: busy ? "正在思考…" : "本轮未收到回复" }));
       }
-      for (const part of parts) {
-        if (part.type === "text") body.append(textPart(part));
-        else if (part.type === "tool") body.append(toolPart(part));
+      let pendingTools = [];
+      const flushTools = () => {
+        if (pendingTools.length) body.append(toolGroup(pendingTools));
+        pendingTools = [];
+      };
+      for (const [partIndex, part] of parts.entries()) {
+        if (part.type === "tool") { pendingTools.push(part); continue; }
+        if (!['text', 'reasoning', 'file'].includes(part.type)) continue;
+        flushTools();
+        if (part.type === "text" && !part.synthetic) body.append(textPart(part, role));
         else if (part.type === "reasoning" && part.text) {
           const reasoning = el("details", { class: "wsp-reasoning" }, el("summary", { text: "思考过程" }), el("div", { text: part.text }));
+          const key = `reasoning:${part.id || `${message.info?.id}:${partIndex}`}`;
+          if (state.expandedTools.get(key)) reasoning.open = true;
+          reasoning.addEventListener("toggle", () => state.expandedTools.set(key, reasoning.open));
           body.append(reasoning);
-        } else if (part.type === "file") body.append(el("div", { class: "wsp-part", text: `附件：${part.filename || part.url || "文件"}` }));
+        } else if (part.type === "file") {
+          const filename = part.filename || "附件";
+          const file = el("div", { class: "wsp-message-file" },
+            el("span", { text: `📎 ${filename}` }));
+          if (/^data:image\/(?:png|jpeg|gif|webp);base64,/.test(part.url || "")) {
+            file.append(el("img", { src: part.url, alt: filename, loading: "lazy" }));
+          }
+          body.append(file);
+        }
       }
+      flushTools();
       row.append(body);
       content.append(row);
     }
@@ -357,7 +562,7 @@ function renderWorkspace(view) {
         el("strong", { text: `需要确认：${permission.permission || permission.action || "工具操作"}` }),
         el("p", { text: (permission.patterns || permission.resources || []).join("、") || "OpenCode 请求继续执行此操作。" }));
       const actions = el("div", { class: "wsp-permission-actions" });
-      for (const [label, reply, cls] of [["允许一次", "once", "wsp-mini primary"], ["拒绝", "reject", "wsp-mini"]]) {
+      for (const [label, reply, cls] of [["允许一次", "once", "wsp-mini primary"], ["始终允许", "always", "wsp-mini"], ["拒绝", "reject", "wsp-mini"]]) {
         actions.append(el("button", { class: cls, type: "button", text: label, onclick: () => replyPermission(permission.id, reply) }));
       }
       card.append(actions);
@@ -370,38 +575,183 @@ function renderWorkspace(view) {
     if (state.actionError) content.append(el("div", { class: "wsp-error", text: state.actionError }));
   }
 
+  function panelIntro(title, description) {
+    return el("div", { class: "wsp-panel-intro" }, el("div", {},
+      el("h2", { text: title }), el("p", { text: description })));
+  }
+
+  function diffRows(diff) {
+    if (diff.derived) {
+      const input = diff.input || {};
+      if (typeof input.oldString === "string" && typeof input.newString === "string") {
+        return [...input.oldString.split("\n").map((text, index) => ({ type: "removed", number: index + 1, text: `-${text}` })),
+          ...input.newString.split("\n").map((text, index) => ({ type: "added", number: index + 1, text: `+${text}` }))].slice(0, 120);
+      }
+      const preview = typeof input.content === "string" ? input.content : "";
+      if (!preview) return [];
+      return preview.split("\n").slice(0, 120).map((text, index) => ({ type: "context", number: index + 1, text: ` ${text}` }));
+    }
+    const patch = String(diff.patch || "");
+    if (patch) {
+      let oldLine = 1;
+      let newLine = 1;
+      return patch.split("\n").flatMap((line) => {
+        const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)/);
+        if (hunk) { oldLine = Number(hunk[1]); newLine = Number(hunk[2]); return [{ type: "hunk", number: "", text: line }]; }
+        if (line.startsWith("--- ") || line.startsWith("+++ ") || line.startsWith("\\ No newline")) return [];
+        if (line.startsWith("+")) return [{ type: "added", number: newLine++, text: line }];
+        if (line.startsWith("-")) return [{ type: "removed", number: oldLine++, text: line }];
+        return [{ type: "context", number: newLine++, text: line }].map((row) => { oldLine++; return row; });
+      }).slice(0, 240);
+    }
+    if (typeof diff.before !== "string" || typeof diff.after !== "string") return [];
+    const before = diff.before.split("\n");
+    const after = diff.after.split("\n");
+    let prefix = 0;
+    while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix++;
+    let suffix = 0;
+    while (suffix < before.length - prefix && suffix < after.length - prefix &&
+      before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) suffix++;
+    const rows = [];
+    const start = Math.max(0, prefix - 3);
+    if (start) rows.push({ type: "hunk", number: "", text: `… ${start} 行未显示` });
+    for (let i = start; i < prefix; i++) rows.push({ type: "context", number: i + 1, text: ` ${before[i]}` });
+    for (let i = prefix; i < before.length - suffix && rows.length < 235; i++) rows.push({ type: "removed", number: i + 1, text: `-${before[i]}` });
+    for (let i = prefix; i < after.length - suffix && rows.length < 235; i++) rows.push({ type: "added", number: i + 1, text: `+${after[i]}` });
+    for (let i = after.length - suffix; i < Math.min(after.length, after.length - suffix + 3) && rows.length < 240; i++)
+      rows.push({ type: "context", number: i + 1, text: ` ${after[i]}` });
+    if (after.length - suffix + 3 < after.length) rows.push({ type: "hunk", number: "", text: "… 其余未改动行已省略" });
+    return rows;
+  }
+
+  function diffLineCounts(diff) {
+    const additions = Number(diff.additions);
+    const deletions = Number(diff.deletions);
+    if (diff.additions != null && diff.deletions != null && Number.isFinite(additions) && Number.isFinite(deletions))
+      return { additions, deletions };
+    const input = diff.derived ? diff.input || {} : diff;
+    if (typeof input.oldString === "string" && typeof input.newString === "string") {
+      const count = (value) => value ? value.split("\n").length : 0;
+      return { additions: count(input.newString), deletions: count(input.oldString) };
+    }
+    if (typeof diff.patch === "string" && diff.patch) {
+      const lines = diff.patch.split("\n");
+      return { additions: lines.filter((line) => line.startsWith("+") && !line.startsWith("+++ ")).length,
+        deletions: lines.filter((line) => line.startsWith("-") && !line.startsWith("--- ")).length };
+    }
+    return null;
+  }
+
   function renderChanges() {
-    content.append(el("h2", { class: "wsp-section-title", text: "文件改动" }),
-      el("p", { class: "wsp-section-note", text: "由 OpenCode 会话提供的文件差异。" }));
-    if (!state.sessionId || !state.diffs.length) {
+    content.append(panelIntro("文件改动", "在同一处查看当前对话涉及的文件与代码差异。"));
+    const writtenFiles = new Map();
+    if (state.sessionId && !state.diffs.length) {
+      for (const message of state.messages) for (const part of message.parts || []) {
+        if (part.type !== "tool" || !["write", "edit", "apply_patch", "multiedit"].includes(part.tool)) continue;
+        if (part.state?.status !== "completed") continue;
+        const path = part.state?.input?.filePath || part.state?.input?.path;
+        if (path) writtenFiles.set(path, { file: path, derived: true, input: part.state.input });
+      }
+    }
+    const diffs = state.diffs.length ? state.diffs : [...writtenFiles.values()];
+    if (!state.sessionId || !diffs.length) {
       content.append(empty("暂无文件改动", "OpenCode 修改文件后，这里会显示改动摘要。"));
       return;
     }
-    for (const diff of state.diffs) {
+    const counts = diffs.map(diffLineCounts);
+    const knownCounts = counts.filter(Boolean);
+    const additions = knownCounts.reduce((sum, count) => sum + count.additions, 0);
+    const deletions = knownCounts.reduce((sum, count) => sum + count.deletions, 0);
+    const countLabel = (value, sign) => !knownCounts.length ? "—" :
+      `${knownCounts.length < diffs.length ? "≥" : ""}${sign}${value}`;
+    const overview = el("div", { class: "wsp-diff-overview" });
+    for (const [value, label, className] of [[diffs.length, "修改文件", ""], [countLabel(additions, "+"), "新增行", "add"], [countLabel(deletions, "−"), "删除行", "remove"]]) {
+      overview.append(el("div", { class: `wsp-diff-metric ${className}` },
+        el("strong", { text: String(value) }), el("span", { text: label })));
+    }
+    content.append(overview);
+    for (const [index, diff] of diffs.entries()) {
+      const lineCounts = counts[index];
       const title = diff.file || diff.path || "文件";
-      const count = `+${diff.additions || 0}  −${diff.deletions || 0}`;
-      const card = el("div", { class: "wsp-diff-file" },
-        el("div", { class: "wsp-diff-head" }, el("span", { text: title }), el("span", { text: count })));
-      if (diff.patch) card.append(el("div", { class: "wsp-diff-content", text: String(diff.patch).slice(0, 12000) }));
-      else if (diff.after) card.append(el("div", { class: "wsp-diff-content", text: String(diff.after).slice(0, 12000) }));
+      const card = el("section", { class: "wsp-diff-file" },
+        el("div", { class: "wsp-diff-head" },
+          el("span", { class: "wsp-file-badge", text: diff.derived ? "已写入" : "修改" }),
+          el("span", { class: "wsp-diff-path", title, text: title }),
+          el("span", { class: "wsp-diff-stats", text: lineCounts ? `+${lineCounts.additions}  −${lineCounts.deletions}` : "" })));
+      const rows = diffRows(diff);
+      if (rows.length) {
+        if (diff.derived) card.append(el("p", { class: "wsp-diff-preview-label", text: "写入内容预览 · OpenCode 未返回完整逐行差异" }));
+        const body = el("div", { class: "wsp-diff-body" });
+        for (const row of rows) body.append(el("div", { class: `wsp-diff-line ${row.type}` },
+          el("span", { class: "wsp-line-number", text: String(row.number) }), el("span", { text: row.text })));
+        card.append(body);
+      } else card.append(el("p", { class: "wsp-diff-unavailable", text: diff.derived
+        ? "OpenCode 记录了文件写入，但没有返回可显示的逐行差异。" : "此文件没有可显示的逐行差异。" }));
       content.append(card);
     }
   }
 
   function renderActivity() {
-    content.append(el("h2", { class: "wsp-section-title", text: "对话活动" }),
-      el("p", { class: "wsp-section-note", text: "当前对话的工具步骤。顶部“轨迹”菜单继续显示代理录制的模型调用轨迹。" }));
+    content.append(panelIntro("对话活动", "这里汇总当前对话的模型请求和工具步骤；顶部“轨迹”查看代理记录的全局会话。"));
+    const timeline = el("div", { class: "wsp-trace-list" });
     let count = 0;
+    const addEvent = (time, title, description, duration, color) => {
+      timeline.append(el("div", { class: "wsp-trace-row" },
+        el("span", { class: "wsp-trace-time", text: eventTime(time) }),
+        el("span", { class: `wsp-trace-dot ${color}` }),
+        el("span", { class: "wsp-trace-content" }, el("strong", { text: title }), el("span", { text: description })),
+        el("span", { class: "wsp-trace-duration", text: duration })));
+      count++;
+    };
     for (const message of state.messages) {
+      if (message.info?.role !== "assistant") continue;
+      const info = message.info;
+      const start = info.time?.created;
+      const end = info.time?.completed;
+      const seconds = start && end ? (new Date(end) - new Date(start)) / 1000 : NaN;
+      addEvent(start, "模型请求", [info.providerID, info.modelID].filter(Boolean).join(" / ") || "OpenCode 回复",
+        Number.isFinite(seconds) && seconds >= 0 ? `${seconds.toFixed(1)} 秒` : "", info.error ? "red" : "");
       for (const part of message.parts || []) {
-        if (part.type === "tool") { content.append(toolPart(part)); count++; }
+        if (part.type !== "tool") continue;
+        const detail = part.state?.input || {};
+        const description = detail.filePath || detail.path || detail.command || detail.pattern || detail.description || "工具操作";
+        const title = { read: "读取文件", write: "文件改动", edit: "文件改动", bash: "运行命令", grep: "搜索内容", glob: "查找文件", task: "执行任务" }[part.tool] || part.tool || "工具操作";
+        const status = part.state?.status;
+        addEvent(part.state?.time?.start || start, title, String(description), toolDuration(part) || (status === "running" ? "运行中" : ""),
+          status === "error" ? "red" : status === "completed" ? "green" : "amber");
       }
     }
-    if (!count) content.append(empty("暂无工具活动", "OpenCode 调用工具时，这里会按顺序展示。"));
+    for (const request of [...state.permissions, ...state.questions].filter((item) => item.sessionID === state.sessionId))
+      addEvent(request.time?.created, "等待确认", request.permission || "需要你的回答", "待确认", "amber");
+    if (count) content.append(timeline);
+    else content.append(empty("暂无对话活动", "OpenCode 回复或调用工具后，这里会按顺序展示。"));
+  }
+
+  function renderTasks() {
+    content.append(el("h2", { class: "wsp-section-title", text: "任务与子对话" }),
+      el("p", { class: "wsp-section-note", text: "OpenCode 在本轮对话中维护的待办和委派任务。" }));
+    if (!state.todos.length && !state.children.length) {
+      content.append(empty("暂无任务", "OpenCode 制定计划或启动子任务后会显示在这里。"));
+      return;
+    }
+    for (const todo of state.todos) {
+      const status = todo.status || "pending";
+      content.append(el("div", { class: `wsp-todo ${status}` },
+        el("span", { class: "wsp-todo-mark", text: status === "completed" ? "✓" : status === "in_progress" ? "◉" : "○" }),
+        el("span", { text: todo.content || todo.title || "任务" }),
+        el("small", { text: status === "completed" ? "已完成" : status === "in_progress" ? "进行中" : "待处理" })));
+    }
+    if (state.children.length) content.append(el("h3", { class: "wsp-section-title", text: "子对话" }));
+    for (const child of state.children) {
+      content.append(el("button", { class: "wsp-child", type: "button", onclick: () => selectSession(state.projectId, child.id) },
+        el("strong", { text: sessionTitle(child) }), el("small", { text: stamp(child) })));
+    }
   }
 
   function renderMain() {
-    const nearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 140;
+    const previousTop = scroll.scrollTop;
+    const previousMaximum = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    const nearBottom = previousTop > 0 && previousMaximum > 0 && previousMaximum - previousTop < Math.min(80, previousMaximum / 3);
     const active = document.activeElement;
     const editingQuestion = active?.classList?.contains("wsp-question-custom")
       ? { id: active.dataset.requestId, index: active.dataset.questionIndex,
@@ -410,12 +760,13 @@ function renderWorkspace(view) {
     if (state.tab === "chat") renderMessages();
     if (state.tab === "changes") renderChanges();
     if (state.tab === "activity") renderActivity();
-    if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
+    if (state.tab === "tasks") renderTasks();
+    scroll.scrollTop = nearBottom ? scroll.scrollHeight : previousTop;
     if (editingQuestion) {
       const restored = Array.from(content.querySelectorAll(".wsp-question-custom")).find((field) =>
         field.dataset.requestId === editingQuestion.id && field.dataset.questionIndex === editingQuestion.index);
       if (restored) {
-        restored.focus();
+        restored.focus({ preventScroll: true });
         restored.setSelectionRange(editingQuestion.start, editingQuestion.end);
       }
     }
@@ -425,12 +776,13 @@ function renderWorkspace(view) {
     try {
       const data = await api(`workspace/projects/${encodeURIComponent(project.id)}/sessions`, { silent: true });
       if (!alive()) return;
-      const items = (data.items || []).filter((item) => !item.parentID && !item.time?.archived);
+      const items = (data.items || []).filter((item) => !item.time?.archived);
       items.sort((a, b) => (b.time?.updated || 0) - (a.time?.updated || 0));
       state.sessions.set(project.id, items);
       if (state.projectId === project.id) lastSessionListRefresh = Date.now();
       state.errors.delete(project.id);
-      if (state.projectId === project.id && !items.some((item) => item.id === state.sessionId)) {
+      if (state.projectId === project.id && !items.some((item) => item.id === state.sessionId) &&
+          !state.sessionDetails.has(state.sessionId)) {
         state.sessionId = items[0]?.id || null;
         workspaceSelection.sessionId = state.sessionId;
         refreshSelected();
@@ -456,8 +808,17 @@ function renderWorkspace(view) {
     const choice = selectedModel();
     const provider = state.providers.find((item) => item.id === choice.provider_id);
     const model = provider?.models?.[choice.model_id];
-    modelButton.textContent = model ? `${provider.name || provider.id} / ${model.name || choice.model_id}` : "模型 · 自动选择";
+    modelButton.replaceChildren(
+      el("span", { class: "wsp-model-label", text: model ? model.name || choice.model_id : "自动" }),
+      el("svg", { class: "wsp-model-chevron", viewBox: "0 0 24 24", "aria-hidden": "true" },
+        el("path", { d: "m6 9 6 6 6-6" })));
     modelButton.title = model ? `${provider.id} / ${choice.model_id}` : "由 OpenCode 选择默认模型";
+    const variants = Object.keys(model?.variants || {});
+    variantSelect.replaceChildren(el("option", { value: "", text: "默认强度" }),
+      ...variants.map((variant) => el("option", { value: variant, text: variant })));
+    variantSelect.hidden = !variants.length;
+    const chosen = state.chosenVariants.get(state.projectId) || "";
+    variantSelect.value = variants.includes(chosen) ? chosen : "";
   }
 
   function closeModelPicker() {
@@ -505,6 +866,7 @@ function renderWorkspace(view) {
   function chooseModel(value) {
     if (state.projectId) {
       state.chosenModels.set(state.projectId, value);
+      state.chosenVariants.set(state.projectId, "");
       try { localStorage.setItem(`sona-code:model:${state.projectId}`, value); } catch (_) { /* Storage may be unavailable. */ }
     }
     updateModelButton();
@@ -684,12 +1046,15 @@ function renderWorkspace(view) {
     const sessionId = state.sessionId;
     const base = sessionPath(projectId, sessionId);
     try {
-      const [messages, statuses, permissions, questions, diffs] = await Promise.allSettled([
+      const [messages, statuses, permissions, questions, diffs, todos, children, session] = await Promise.allSettled([
         api(`${base}/messages`, { silent: true }),
         api(`workspace/projects/${encodeURIComponent(projectId)}/status`, { silent: true }),
         api(`workspace/projects/${encodeURIComponent(projectId)}/permissions`, { silent: true }),
         api(`workspace/projects/${encodeURIComponent(projectId)}/questions`, { silent: true }),
         state.tab === "changes" ? api(`${base}/diff`, { silent: true }) : Promise.resolve(state.diffs),
+        state.tab === "tasks" ? api(`${base}/todo`, { silent: true }) : Promise.resolve(state.todos),
+        state.tab === "tasks" ? api(`${base}/children`, { silent: true }) : Promise.resolve(state.children),
+        api(base, { silent: true }),
       ]);
       if (!alive() || state.projectId !== projectId || state.sessionId !== sessionId) return;
       if (messages.status === "fulfilled") state.messages = Array.isArray(messages.value) ? messages.value : [];
@@ -697,6 +1062,12 @@ function renderWorkspace(view) {
       if (permissions.status === "fulfilled") state.permissions = Array.isArray(permissions.value) ? permissions.value : [];
       if (questions.status === "fulfilled") state.questions = Array.isArray(questions.value) ? questions.value : [];
       if (diffs.status === "fulfilled") state.diffs = Array.isArray(diffs.value) ? diffs.value : [];
+      if (todos.status === "fulfilled") state.todos = Array.isArray(todos.value) ? todos.value : [];
+      if (children.status === "fulfilled") {
+        state.children = Array.isArray(children.value) ? children.value : [];
+        for (const child of state.children) state.sessionDetails.set(child.id, child);
+      }
+      if (session.status === "fulfilled" && session.value?.id) state.sessionDetails.set(session.value.id, session.value);
       if (messages.status === "rejected") content.replaceChildren(el("div", { class: "wsp-error", text: detail(messages.reason) }));
       else renderMain();
       renderHeader();
@@ -714,10 +1085,11 @@ function renderWorkspace(view) {
     }
     const remembered = workspaceSelection.projectId === projectId ? workspaceSelection.sessionId : null;
     state.sessionId = remembered || (state.sessions.get(projectId) || [])[0]?.id || null;
-    state.messages = []; state.permissions = []; state.questions = []; state.questionDrafts.clear(); state.diffs = [];
+    state.messages = []; state.permissions = []; state.questions = []; state.questionDrafts.clear(); state.diffs = []; state.todos = []; state.children = [];
     state.tab = "chat";
     workspaceSelection = { projectId, sessionId: state.sessionId };
     root.classList.remove("show-side");
+    updateSidebarButton();
     renderSidebar(); renderHeader(); renderMain();
     connectEvents(projectId);
     loadModels(projectId);
@@ -736,10 +1108,11 @@ function renderWorkspace(view) {
       catch (_) { state.chosenModels.set(projectId, ""); }
     }
     state.sessionId = sessionId;
-    state.messages = []; state.permissions = []; state.questions = []; state.questionDrafts.clear(); state.diffs = [];
+    state.messages = []; state.permissions = []; state.questions = []; state.questionDrafts.clear(); state.diffs = []; state.todos = []; state.children = [];
     state.tab = "chat";
     workspaceSelection = { projectId, sessionId };
     root.classList.remove("show-side");
+    updateSidebarButton();
     renderSidebar(); renderHeader(); renderMain();
     connectEvents(projectId);
     loadModels(projectId);
@@ -811,6 +1184,7 @@ function renderWorkspace(view) {
               if (!alive()) return;
               mask.remove();
               state.projects = [project, ...state.projects.filter((item) => item.id !== project.id)];
+              state.collapsedProjects.delete(project.id);
               selectProject(project.id);
               loadSessions(project);
             } catch (error) { errorLine.textContent = detail(error); errorLine.classList.remove("hidden"); }
@@ -822,6 +1196,15 @@ function renderWorkspace(view) {
 
   view.querySelector("#wsp-add").addEventListener("click", openAddProject);
   view.querySelector("#wsp-new").addEventListener("click", createSession);
+  moreButton.addEventListener("click", () => {
+    if (actionMenu.hidden) { renderActionMenu(); actionMenu.hidden = false; moreButton.setAttribute("aria-expanded", "true"); }
+    else closeActionMenu();
+  });
+  const outsideActions = (event) => {
+    if (!actionMenu.hidden && !actionMenu.contains(event.target) && event.target !== moreButton) closeActionMenu();
+  };
+  document.addEventListener("pointerdown", outsideActions);
+  addCleanup(() => document.removeEventListener("pointerdown", outsideActions));
   view.querySelector("#wsp-abort").addEventListener("click", async () => {
     if (!state.projectId || !state.sessionId) return;
     try {
@@ -829,7 +1212,18 @@ function renderWorkspace(view) {
       await refreshSelected();
     } catch (error) { toast("停止任务失败：" + detail(error), "error"); }
   });
-  view.querySelector("#wsp-menu").addEventListener("click", () => root.classList.toggle("show-side"));
+  view.querySelector("#wsp-menu").addEventListener("click", () => {
+    if (window.matchMedia("(max-width: 700px)").matches) root.classList.toggle("show-side");
+    else {
+      root.classList.toggle("side-collapsed");
+      try { localStorage.setItem("sona-code:sidebar-collapsed", root.classList.contains("side-collapsed") ? "1" : "0"); }
+      catch (_) { /* Storage may be unavailable. */ }
+    }
+    updateSidebarButton();
+  });
+  for (const id of ["#wsp-side-close", "#wsp-side-scrim"]) {
+    view.querySelector(id).addEventListener("click", () => { root.classList.remove("show-side"); updateSidebarButton(); });
+  }
   view.querySelector("#wsp-search").addEventListener("input", (event) => { state.search = event.target.value; renderSidebar(); });
   const searchShortcut = (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k" && location.hash === "#/workspace") {
@@ -839,6 +1233,8 @@ function renderWorkspace(view) {
   };
   document.addEventListener("keydown", searchShortcut);
   addCleanup(() => document.removeEventListener("keydown", searchShortcut));
+  window.addEventListener("resize", updateSidebarButton);
+  addCleanup(() => window.removeEventListener("resize", updateSidebarButton));
   modelButton.addEventListener("click", () => modelPicker.hidden ? openModelPicker() : closeModelPicker());
   view.querySelector("#wsp-model-close").addEventListener("click", closeModelPicker);
   modelSearch.addEventListener("input", renderModelPicker);
@@ -853,10 +1249,14 @@ function renderWorkspace(view) {
   agentSelect.addEventListener("change", () => {
     if (state.projectId) state.chosenAgents.set(state.projectId, agentSelect.value);
   });
+  variantSelect.addEventListener("change", () => {
+    if (state.projectId) state.chosenVariants.set(state.projectId, variantSelect.value);
+  });
   view.querySelectorAll(".wsp-tab").forEach((button) => button.addEventListener("click", () => {
     state.tab = button.dataset.wspTab;
+    scroll.scrollTop = 0;
     renderHeader(); renderMain();
-    if (state.tab === "changes") refreshSelected();
+    if (state.tab === "changes" || state.tab === "tasks") refreshSelected();
   }));
   view.querySelector("#wsp-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -878,6 +1278,7 @@ function renderWorkspace(view) {
       if (slash && await executeBuiltIn(slash[1])) return;
       await ensureSessionForSend();
       const model = selectedModel();
+      const variant = variantSelect.hidden || !variantSelect.value ? {} : { variant: variantSelect.value };
       const agent = agentSelect.value || "build";
       if (slash || shell) {
         state.pendingAction = slash ? `/${slash[1]}` : `!${shell}`;
@@ -886,7 +1287,7 @@ function renderWorkspace(view) {
       }
       if (slash) {
         await api(`${sessionPath(state.projectId, state.sessionId)}/command`, {
-          method: "POST", body: { command: slash[1], arguments: slash[2] || "", agent, ...model }, silent: true,
+          method: "POST", body: { command: slash[1], arguments: slash[2] || "", agent, ...model, ...variant }, silent: true,
         });
       } else if (shell) {
         await api(`${sessionPath(state.projectId, state.sessionId)}/shell`, {
@@ -894,7 +1295,7 @@ function renderWorkspace(view) {
         });
       } else {
         await api(`${sessionPath(state.projectId, state.sessionId)}/prompt`, {
-          method: "POST", body: { text, agent, ...model }, silent: true,
+          method: "POST", body: { text, agent, ...model, ...variant }, silent: true,
         });
       }
       if (!alive()) return;
@@ -930,6 +1331,8 @@ function renderWorkspace(view) {
       if (project) loadSessions(project);
     }
   }, 2500);
+  updateModelButton();
+  updateSidebarButton();
   (async () => {
     try {
       const [projects, check] = await Promise.all([
@@ -937,6 +1340,7 @@ function renderWorkspace(view) {
       ]);
       if (!alive()) return;
       state.projects = projects.items || [];
+      state.collapsedProjects = new Set(state.projects.map((project) => project.id));
       state.check = check;
       view.querySelector("#wsp-connection").replaceChildren(
         el("strong", { text: check.found ? "OpenCode 可用" : "未找到 OpenCode" }),

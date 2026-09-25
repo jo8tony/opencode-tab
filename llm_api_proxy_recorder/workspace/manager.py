@@ -120,7 +120,7 @@ class WorkspaceManager:
         try:
             response = await server.client.request(
                 method, endpoint, params={"directory": project}, json=body,
-                timeout=180 if endpoint.endswith(("/command", "/shell")) else 20,
+                timeout=180 if endpoint.endswith(("/command", "/shell", "/summarize")) else 20,
             )
         except httpx.RequestError as exc:
             raise WorkspaceError(f"连接 OpenCode 服务失败：{exc}", 502) from exc

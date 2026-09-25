@@ -3,13 +3,15 @@
 
 /* ============================================================ 工具 */
 const $ = (sel, root) => (root || document).querySelector(sel);
+const EL_SVG_TAGS = new Set(["svg", "path", "circle", "rect", "line", "polyline", "polygon", "g", "defs", "linearGradient", "stop", "ellipse"]);
 
 function el(tag, attrs, ...children) {
-  const node = document.createElement(tag);
+  const isSvg = EL_SVG_TAGS.has(tag);
+  const node = isSvg ? document.createElementNS("http://www.w3.org/2000/svg", tag) : document.createElement(tag);
   if (attrs) {
     for (const [k, v] of Object.entries(attrs)) {
       if (v === null || v === undefined) continue;
-      if (k === "class") node.className = v;
+      if (k === "class") { if (isSvg) node.setAttribute("class", v); else node.className = v; }
       else if (k === "text") node.textContent = v;
       else if (k === "value") node.value = v;
       else if (k === "checked") node.checked = !!v;

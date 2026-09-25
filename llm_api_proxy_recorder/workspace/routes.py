@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import os
 import re
@@ -108,6 +110,95 @@ async def create_session(project_id: str, body: CreateSessionBody, request: Requ
     return await _opencode(request, path, "POST", "/session", {"title": body.title} if body.title else {})
 
 
+@router.get("/workspace/projects/{project_id}/sessions/{session_id}")
+async def get_session(project_id: str, session_id: str, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}")
+
+
+class RenameSessionBody(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
+@router.patch("/workspace/projects/{project_id}/sessions/{session_id}")
+async def rename_session(project_id: str, session_id: str, body: RenameSessionBody, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "PATCH", f"/session/{_safe_id(session_id)}", {"title": body.title})
+
+
+@router.delete("/workspace/projects/{project_id}/sessions/{session_id}")
+async def delete_session(project_id: str, session_id: str, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "DELETE", f"/session/{_safe_id(session_id)}")
+
+
+class ForkSessionBody(BaseModel):
+    message_id: str | None = None
+
+
+@router.post("/workspace/projects/{project_id}/sessions/{session_id}/fork")
+async def fork_session(project_id: str, session_id: str, body: ForkSessionBody, request: Request):
+    path = _project_path(request, project_id)
+    payload = {"messageID": _safe_id(body.message_id)} if body.message_id else {}
+    return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/fork", payload)
+
+
+@router.get("/workspace/projects/{project_id}/sessions/{session_id}/children")
+async def session_children(project_id: str, session_id: str, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}/children")
+
+
+@router.get("/workspace/projects/{project_id}/sessions/{session_id}/todo")
+async def session_todo(project_id: str, session_id: str, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}/todo")
+
+
+@router.post("/workspace/projects/{project_id}/sessions/{session_id}/share")
+async def share_session(project_id: str, session_id: str, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/share", {})
+
+
+@router.delete("/workspace/projects/{project_id}/sessions/{session_id}/share")
+async def unshare_session(project_id: str, session_id: str, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "DELETE", f"/session/{_safe_id(session_id)}/share")
+
+
+class RevertMessageBody(BaseModel):
+    message_id: str = Field(min_length=1)
+    part_id: str | None = None
+
+
+@router.post("/workspace/projects/{project_id}/sessions/{session_id}/revert")
+async def revert_message(project_id: str, session_id: str, body: RevertMessageBody, request: Request):
+    path = _project_path(request, project_id)
+    payload = {"messageID": _safe_id(body.message_id)}
+    if body.part_id:
+        payload["partID"] = _safe_id(body.part_id)
+    return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/revert", payload)
+
+
+@router.post("/workspace/projects/{project_id}/sessions/{session_id}/unrevert")
+async def unrevert_session(project_id: str, session_id: str, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/unrevert", {})
+
+
+class SummarizeSessionBody(BaseModel):
+    provider_id: str = Field(min_length=1)
+    model_id: str = Field(min_length=1)
+
+
+@router.post("/workspace/projects/{project_id}/sessions/{session_id}/summarize")
+async def summarize_session(project_id: str, session_id: str, body: SummarizeSessionBody, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/summarize",
+                           {"providerID": body.provider_id, "modelID": body.model_id})
+
+
 @router.get("/workspace/projects/{project_id}/status")
 async def project_status(project_id: str, request: Request):
     path = _project_path(request, project_id)
@@ -155,10 +246,37 @@ async def list_messages(project_id: str, session_id: str, request: Request):
 
 
 class PromptBody(BaseModel):
-    text: str = Field(min_length=1, max_length=100_000)
+    text: str = Field(default="", max_length=100_000)
+    files: list["PromptFile"] = Field(default_factory=list, max_length=8)
     provider_id: str | None = None
     model_id: str | None = None
     agent: str | None = None
+    variant: str | None = Field(default=None, max_length=100)
+
+
+class PromptFile(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    mime: str = Field(min_length=1, max_length=100)
+    url: str = Field(min_length=1, max_length=14_000_000)
+
+
+def _prompt_file_part(file: PromptFile) -> tuple[dict, int]:
+    # Data URLs come from the browser file picker. Accept only the media types
+    # OpenCode can consume, and avoid passing arbitrary URLs to its server.
+    if file.mime not in {"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf", "text/plain"}:
+        raise HTTPException(status_code=400, detail="不支持的附件类型")
+    if "/" in file.filename or "\\" in file.filename or file.filename in {".", ".."}:
+        raise HTTPException(status_code=400, detail="无效的附件名称")
+    prefix = f"data:{file.mime};base64,"
+    if not file.url.startswith(prefix):
+        raise HTTPException(status_code=400, detail="附件必须是匹配 MIME 类型的 base64 数据")
+    try:
+        decoded = base64.b64decode(file.url[len(prefix):], validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise HTTPException(status_code=400, detail="附件内容无效") from exc
+    if len(decoded) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="单个附件不能超过 8 MB")
+    return {"type": "file", "filename": file.filename, "mime": file.mime, "url": file.url}, len(decoded)
 
 
 def _model_choice(provider_id: str | None, model_id: str | None) -> dict | None:
@@ -170,12 +288,21 @@ def _model_choice(provider_id: str | None, model_id: str | None) -> dict | None:
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/prompt")
 async def send_prompt(project_id: str, session_id: str, body: PromptBody, request: Request):
     path = _project_path(request, project_id)
-    prompt: dict = {"parts": [{"type": "text", "text": body.text}]}
+    if not body.text.strip() and not body.files:
+        raise HTTPException(status_code=400, detail="请输入消息或添加附件")
+    parts = [{"type": "text", "text": body.text}] if body.text.strip() else []
+    file_parts = [_prompt_file_part(file) for file in body.files]
+    if sum(size for _, size in file_parts) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="附件总大小不能超过 20 MB")
+    parts.extend(part for part, _ in file_parts)
+    prompt: dict = {"parts": parts}
     model = _model_choice(body.provider_id, body.model_id)
     if model:
         prompt["model"] = model
     if body.agent:
         prompt["agent"] = body.agent
+    if body.variant:
+        prompt["variant"] = body.variant
     return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/prompt_async", prompt)
 
 
@@ -185,6 +312,7 @@ class CommandBody(BaseModel):
     provider_id: str | None = None
     model_id: str | None = None
     agent: str | None = None
+    variant: str | None = Field(default=None, max_length=100)
 
 
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/command")
@@ -195,6 +323,8 @@ async def run_command(project_id: str, session_id: str, body: CommandBody, reque
         payload["model"] = f"{body.provider_id}/{body.model_id}"
     if body.agent:
         payload["agent"] = body.agent
+    if body.variant:
+        payload["variant"] = body.variant
     return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/command", payload)
 
 
