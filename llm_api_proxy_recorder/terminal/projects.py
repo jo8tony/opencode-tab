@@ -43,10 +43,24 @@ class TerminalProjectStore:
         item = {"path": resolved, "name": Path(resolved).name or resolved, "kind": kind}
         with self._lock:
             items = self._read()
+            previous = next((old for old in items if old["path"] == resolved), None)
+            if previous:
+                item["name"] = previous.get("name") or item["name"]
             items = [old for old in items if old["path"] != resolved]
             items.insert(0, item)
             self._write(items)
         return item
+
+    def rename(self, path: str, name: str) -> dict[str, str] | None:
+        resolved = str(Path(path).expanduser().resolve())
+        with self._lock:
+            items = self._read()
+            for item in items:
+                if item["path"] == resolved:
+                    item["name"] = name
+                    self._write(items)
+                    return item
+        return None
 
     def delete(self, path: str) -> bool:
         resolved = str(Path(path).expanduser().resolve())

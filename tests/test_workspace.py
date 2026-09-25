@@ -8,6 +8,25 @@ from llm_api_proxy_recorder.app import create_app
 from llm_api_proxy_recorder.config import AppConfig, TerminalConfig, UpstreamConfig
 
 
+def test_open_project_directory_uses_registered_path(tmp_path, monkeypatch):
+    config = AppConfig(
+        upstreams=[UpstreamConfig(name="main", base_url="http://127.0.0.1:9001")],
+        default_upstream="main",
+    )
+    app = create_app(config, config_path=str(tmp_path / "config.json"))
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    app.state.runtime.terminal_projects.add(str(project_dir), "opencode")
+    from llm_api_proxy_recorder.workspace import routes
+    launched = []
+    monkeypatch.setattr(routes.subprocess, "Popen", lambda command, **kwargs: launched.append(command))
+    with TestClient(app) as client:
+        registered_id = client.get("/__recorder/api/workspace/projects").json()["items"][0]["id"]
+        assert client.post(f"/__recorder/api/workspace/projects/{registered_id}/open").json() == {"ok": True}
+        assert launched[0][-1] == str(project_dir)
+        assert client.post("/__recorder/api/workspace/projects/missing/open").status_code == 404
+
+
 def test_workspace_projects_and_session_routes(tmp_path):
     config = AppConfig(
         upstreams=[UpstreamConfig(name="main", base_url="http://127.0.0.1:9001")],
@@ -51,6 +70,22 @@ def test_workspace_projects_and_session_routes(tmp_path):
         project_id = added.json()["id"]
         assert app.state.runtime.terminal_projects.list()[0]["kind"] == "shell"
         assert client.get(f"{prefix}/projects").json()["items"][0]["id"] == project_id
+        renamed = client.patch(f"{prefix}/projects/{project_id}", json={"name": "我的工作区"})
+        assert renamed.json()["name"] == "我的工作区"
+        assert renamed.json()["path"] == str(project_dir)
+        assert client.get(f"{prefix}/projects").json()["items"][0]["name"] == "我的工作区"
+        repeated = client.post(f"{prefix}/projects", json={"path": str(project_dir)})
+        assert repeated.status_code == 201
+        assert repeated.json()["name"] == "我的工作区"
+        assert client.get(f"{prefix}/projects").json()["total"] == 1
+        assert client.patch(f"{prefix}/projects/{project_id}", json={"name": "   "}).status_code == 400
+        fresh_dir = tmp_path / "fresh"
+        fresh_dir.mkdir()
+        assert client.post(f"{prefix}/projects", json={"path": str(fresh_dir)}).status_code == 201
+        assert client.post(f"{prefix}/projects", json={"path": str(fresh_dir)}).status_code == 201
+        assert client.post(f"{prefix}/projects", json={"path": str(tmp_path / 'missing')}).status_code == 400
+        fresh_id = next(item["id"] for item in client.get(f"{prefix}/projects").json()["items"] if item["name"] == "fresh")
+        assert client.delete(f"{prefix}/projects/{fresh_id}").json() == {"ok": True}
         assert client.get(f"{prefix}/projects/{project_id}/sessions").json()["items"][0]["id"] == "ses_123"
         assert client.post(f"{prefix}/projects/{project_id}/sessions", json={"title": "new"}).json()["id"] == "ses_new"
         assert client.get(f"{prefix}/projects/{project_id}/sessions/ses_123").status_code == 200

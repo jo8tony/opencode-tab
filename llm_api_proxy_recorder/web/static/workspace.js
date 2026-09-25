@@ -33,19 +33,19 @@ function renderWorkspace(view) {
       <aside class="wsp-side" aria-label="项目与对话">
         <div class="wsp-brand"><img class="wsp-brand-mark" src="sona-code-icon.png" alt="" width="34" height="34"><span class="wsp-brand-copy"><strong>Sona Code</strong><small>桌面工作区</small></span><button class="wsp-side-close" id="wsp-side-close" type="button" aria-label="关闭项目栏">×</button></div>
         <div class="wsp-side-top">
-          <div class="wsp-side-actions"><button class="wsp-new" id="wsp-new" type="button">＋ 新建对话</button></div>
+          <div class="wsp-side-actions"><button class="wsp-new" id="wsp-new" type="button">＋ 新建项目</button></div>
           <label class="wsp-search-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input class="wsp-search" id="wsp-search" type="search" placeholder="搜索项目和对话" aria-label="搜索项目和对话"><kbd>⌘K</kbd></label>
         </div>
-        <div class="wsp-side-list"><div class="wsp-side-label"><span>项目与对话</span><span class="wsp-side-label-actions"><span id="wsp-project-count"></span><button class="wsp-add" id="wsp-add" type="button" title="添加项目" aria-label="添加项目">＋</button></span></div><div id="wsp-projects"></div></div>
+        <div class="wsp-side-list"><div class="wsp-side-label"><span>项目与对话</span><span class="wsp-side-label-actions"><span id="wsp-project-count"></span></span></div><div id="wsp-projects"></div></div>
         <div class="wsp-side-bottom" id="wsp-connection">正在检查 OpenCode…</div>
       </aside>
       <div class="wsp-side-scrim" id="wsp-side-scrim"></div>
       <div class="wsp-main">
         <nav class="wsp-global-nav" aria-label="主导航"><a class="active" href="#/workspace">工作区</a><a href="#/terminal">OpenCode 终端</a><a href="#/trajectory">轨迹</a><a href="#/calls">调用列表</a><a href="#/dashboard">仪表盘</a><a href="#/settings">设置</a><span class="wsp-nav-spacer"></span><span class="wsp-nav-note">代理观测与开发对话</span></nav>
-        <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" fill="currentColor"/></svg></button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span><div class="wsp-session-actions"><button class="wsp-more" id="wsp-more" type="button" aria-label="对话操作" aria-haspopup="menu" aria-expanded="false" hidden>···</button><div class="wsp-action-menu" id="wsp-action-menu" role="menu" hidden></div></div></header>
+        <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" fill="currentColor"/></svg></button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span></header>
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
-        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><textarea class="wsp-input" id="wsp-input" placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" rows="2"></textarea><input id="wsp-image-picker" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="添加图片，也可直接粘贴截图" aria-label="添加图片"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
+        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><textarea class="wsp-input" id="wsp-input" placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" rows="2"></textarea><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="选择 OpenCode 命令，也可输入 /" aria-label="选择 OpenCode 命令" aria-haspopup="listbox" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
       </div>
     </section>`;
 
@@ -57,7 +57,6 @@ function renderWorkspace(view) {
   const scroll = view.querySelector("#wsp-scroll");
   const input = view.querySelector("#wsp-input");
   const attachmentList = view.querySelector("#wsp-attachment-list");
-  const imagePicker = view.querySelector("#wsp-image-picker");
   const statsLine = view.querySelector("#wsp-stats");
   const modelButton = view.querySelector("#wsp-model-trigger");
   const modelPicker = view.querySelector("#wsp-model-picker");
@@ -71,9 +70,7 @@ function renderWorkspace(view) {
   const variantTrigger = el("button", {
     class: "wsp-variant-trigger", id: "wsp-variant-trigger", type: "button",
     "aria-haspopup": "menu", "aria-expanded": "false", hidden: true,
-  }, el("span", { id: "wsp-variant-label", text: "默认" }),
-  el("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" },
-    el("path", { d: "m6 9 6 6 6-6" })));
+  }, el("span", { id: "wsp-variant-label", text: "默认" }));
   const variantLabel = variantTrigger.querySelector("#wsp-variant-label");
   const variantPicker = el("div", {
     class: "wsp-agent-picker wsp-variant-picker", id: "wsp-variant-picker",
@@ -81,8 +78,6 @@ function renderWorkspace(view) {
   });
   variantSelect.before(variantTrigger, variantPicker);
   const commandMenu = view.querySelector("#wsp-command-menu");
-  const actionMenu = view.querySelector("#wsp-action-menu");
-  const moreButton = view.querySelector("#wsp-more");
   const sessionPath = (projectId, sessionId) =>
     `workspace/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}`;
   const alive = () => !disposed && view.isConnected && (!location.hash || location.hash === "#/workspace");
@@ -327,27 +322,32 @@ function renderWorkspace(view) {
     button.setAttribute("aria-expanded", String(expanded));
   }
 
-  function closeActionMenu() {
-    actionMenu.hidden = true;
-    moreButton.setAttribute("aria-expanded", "false");
+  function closeRowMenus() {
+    sideList.querySelectorAll(".wsp-action-menu").forEach((menu) => { menu.hidden = true; });
+    sideList.querySelectorAll('[aria-haspopup="menu"]').forEach((button) => button.setAttribute("aria-expanded", "false"));
   }
 
-  function renderActionMenu() {
-    const session = activeSession();
-    actionMenu.replaceChildren();
-    if (!session) return;
-    const actions = [
-      ["重命名对话", "rename"], ["从此处创建分支", "fork"], ["压缩上下文", "summarize"],
-    ];
-    actions.push(["删除对话", "delete"]);
+  function rowMenu(actions) {
+    const menu = el("div", { class: "wsp-action-menu", role: "menu", hidden: true });
     for (const [label, action] of actions) {
-      actionMenu.append(el("button", { type: "button", role: "menuitem",
-        class: action === "delete" ? "danger" : "", text: label,
-        onclick: () => { closeActionMenu(); performSessionAction(action); } }));
+      menu.append(el("button", { type: "button", role: "menuitem", class: action === "delete" ? "danger" : "",
+        text: label, onclick: () => { closeRowMenus(); action(); } }));
     }
+    const trigger = el("button", { class: "wsp-row-action", type: "button",
+      "aria-label": "更多操作", "aria-haspopup": "menu", "aria-expanded": "false",
+      onclick: () => {
+        const open = menu.hidden;
+        closeRowMenus();
+        menu.hidden = !open;
+        trigger.setAttribute("aria-expanded", String(open));
+      } }, el("svg", { viewBox: "0 0 20 20", "aria-hidden": "true" },
+        el("circle", { cx: "5", cy: "10", r: "1.5" }),
+        el("circle", { cx: "10", cy: "10", r: "1.5" }),
+        el("circle", { cx: "15", cy: "10", r: "1.5" })));
+    return el("span", { class: "wsp-row-menu-wrap" }, trigger, menu);
   }
 
-  function openRenameDialog(session) {
+  function openRenameDialog(projectId, session) {
     const titleInput = el("input", { type: "text", value: sessionTitle(session), maxlength: "200" });
     const errorLine = el("p", { class: "wsp-question-error" });
     const mask = el("div", { class: "wsp-modal-mask" },
@@ -359,13 +359,13 @@ function renderWorkspace(view) {
             const title = titleInput.value.trim();
             if (!title) { errorLine.textContent = "请输入对话名称"; return; }
             try {
-              const updated = await api(`${sessionPath(state.projectId, session.id)}`, {
+              const updated = await api(`${sessionPath(projectId, session.id)}`, {
                 method: "PATCH", body: { title }, silent: true,
               });
               state.sessionDetails.set(session.id, updated);
               mask.remove();
-              await loadSessions(activeProject());
-              renderHeader();
+              await loadSessions(state.projects.find((item) => item.id === projectId));
+              if (state.projectId === projectId && state.sessionId === session.id) renderHeader();
             } catch (error) { errorLine.textContent = detail(error); }
           } }))));
     mask.addEventListener("click", (event) => { if (event.target === mask) mask.remove(); });
@@ -373,27 +373,29 @@ function renderWorkspace(view) {
     titleInput.focus(); titleInput.select();
   }
 
-  async function performSessionAction(action) {
-    const session = activeSession();
+  async function performSessionAction(projectId, session, action) {
     if (!session) return;
     if (action === "summarize" && state.compactingSessionId === session.id) return;
-    const base = sessionPath(state.projectId, session.id);
-    if (action === "rename") { openRenameDialog(session); return; }
+    const base = sessionPath(projectId, session.id);
+    if (action === "rename") { openRenameDialog(projectId, session); return; }
     if (action === "delete" && !window.confirm(`删除“${sessionTitle(session)}”及其全部消息？此操作无法撤销。`)) return;
     try {
       if (action === "fork") {
         const fork = await api(`${base}/fork`, { method: "POST", body: {}, silent: true });
-        await loadSessions(activeProject());
-        selectSession(state.projectId, fork.id);
+        await loadSessions(state.projects.find((item) => item.id === projectId));
+        selectSession(projectId, fork.id);
         return;
       }
       if (action === "delete") {
         await api(base, { method: "DELETE", silent: true });
         state.sessionDetails.delete(session.id);
-        state.sessionId = null;
-        workspaceSelection.sessionId = null;
-        await loadSessions(activeProject());
-        renderHeader(); renderMain();
+        if (state.projectId === projectId && state.sessionId === session.id) {
+          state.sessionId = null;
+          workspaceSelection.sessionId = null;
+          state.messages = [];
+          renderHeader(); renderMain();
+        }
+        await loadSessions(state.projects.find((item) => item.id === projectId));
         return;
       }
       if (action === "summarize") {
@@ -441,9 +443,14 @@ function renderWorkspace(view) {
         } },
         el("span", { class: "wsp-project-mark", text: (project.name || "P").slice(0, 2).toUpperCase() }),
         el("span", { class: "wsp-project-name", text: project.name }),
-        el("span", { class: "wsp-project-count", text: all ? String(all.length) : "…" }),
-        el("svg", { class: "wsp-project-chevron", viewBox: "0 0 16 16", "aria-hidden": "true" }, el("path", { d: "m4 6 4 4 4-4" })));
-      section.append(heading);
+        el("span", { class: "wsp-project-count", text: all ? String(all.length) : "…" }));
+      const projectRow = el("div", { class: "wsp-project-row" }, heading,
+        rowMenu([["重命名", () => openRenameProject(project)], ["打开目录", () => openProjectDirectory(project)],
+          ["删除工作区", () => removeProject(project)]]),
+        el("button", { class: "wsp-row-action wsp-row-plus", type: "button", text: "+",
+          title: `在 ${project.name} 中新建对话`, "aria-label": `在 ${project.name} 中新建对话`,
+          onclick: () => { state.collapsedProjects.delete(project.id); renderSidebar(); createSession(project.id); } }));
+      section.append(projectRow);
       const threads = el("div", { class: "wsp-threads" });
       if (state.errors.has(project.id)) {
         threads.append(el("div", { class: "wsp-error", text: state.errors.get(project.id) }));
@@ -453,7 +460,7 @@ function renderWorkspace(view) {
         threads.append(el("div", { class: "wsp-thread-time", text: query ? "无匹配对话" : "暂无对话" }));
       }
       for (const session of sessions) {
-        threads.append(el("button", {
+        const threadButton = el("button", {
           class: "wsp-thread" + (session.parentID ? " child" : "") +
             (project.id === state.projectId && session.id === state.sessionId ? " active" : ""),
           type: "button", title: sessionTitle(session),
@@ -461,14 +468,18 @@ function renderWorkspace(view) {
         }, el("span", { class: "wsp-thread-line" },
           el("span", { class: "wsp-thread-title", text: `${session.parentID ? "↳ " : ""}${sessionTitle(session)}` }),
           el("span", { class: "wsp-thread-time", title: "对话最后更新时间", text: shortStamp(session) })),
-        el("span", { class: "wsp-thread-preview", text: stamp(session) })));
+        el("span", { class: "wsp-thread-preview", text: stamp(session) }));
+        threads.append(el("div", { class: "wsp-thread-row" }, threadButton,
+          rowMenu([["重命名", () => performSessionAction(project.id, session, "rename")],
+            ["分叉会话", () => performSessionAction(project.id, session, "fork")],
+            ["删除", () => performSessionAction(project.id, session, "delete")]])));
       }
       section.append(threads);
       sideList.append(section);
     }
     if (query && !visible) sideList.append(el("p", { class: "wsp-empty-search", text: "没有找到匹配的项目或对话。" }));
     else if (!state.projects.length) sideList.append(el("div", { class: "wsp-empty", style: "min-height:200px" },
-      el("p", { text: "还没有项目。点击上方 ＋ 添加项目目录。" })));
+      el("p", { text: "还没有项目。点击上方按钮选择已有目录。" })));
   }
 
   function renderHeader() {
@@ -495,12 +506,9 @@ function renderWorkspace(view) {
       label.dataset.kind = kind;
     }
     view.querySelector("#wsp-abort").hidden = !session || !busy;
-    moreButton.hidden = !session;
-    if (!session) closeActionMenu();
     view.querySelectorAll(".wsp-tab").forEach((button) => button.classList.toggle("active", button.dataset.wspTab === state.tab));
     view.querySelector("#wsp-send").disabled = state.sending || !project || !state.check?.found;
     view.querySelector("#wsp-attach").disabled = state.sending || state.pendingImageCount > 0 || !project;
-    view.querySelector("#wsp-new").disabled = !state.projects.length || !state.check?.found;
     modelButton.disabled = !project;
   }
 
@@ -513,9 +521,15 @@ function renderWorkspace(view) {
 
   function textPart(part, role) {
     const node = el("div", { class: "wsp-part wsp-text" });
-    if (role === "user") node.textContent = part.text || "";
+    if (role === "user") node.textContent = isInitCommandPrompt(part.text) ? "/init" : part.text || "";
     else node.append(trjMarkdown(part.text || ""));
     return node;
+  }
+
+  function isInitCommandPrompt(text) {
+    return typeof text === "string" &&
+      text.startsWith("Create or update `AGENTS.md` for this repository.") &&
+      text.includes("The goal is a compact instruction file that helps future OpenCode sessions");
   }
   function messageError(info) {
     const error = info?.error;
@@ -714,7 +728,7 @@ function renderWorkspace(view) {
   function renderMessages() {
     if (!state.sessionId) {
       content.append(empty("开始一段新对话", "选择项目后新建对话，OpenCode 会在该项目目录中工作。",
-        activeProject() ? ["新建对话", createSession] : ["添加项目", openAddProject]));
+        activeProject() ? ["新建对话", () => createSession()] : ["新建项目", openAddProject]));
       return;
     }
     if (!state.messages.length && !state.permissions.some((item) => item.sessionID === state.sessionId) &&
@@ -1297,14 +1311,19 @@ function renderWorkspace(view) {
   const builtInCommands = [
     { name: "help", description: "查看可用命令" },
     { name: "new", description: "新建对话" },
+    { name: "compact", description: "压缩当前对话上下文" },
+    { name: "summarize", description: "压缩当前对话上下文（/compact 别名）" },
     { name: "models", description: "选择 Provider 和模型" },
     { name: "agents", description: "选择 Agent" },
     { name: "stop", description: "停止当前任务" },
     { name: "settings", description: "打开设置" },
   ];
+  let commandPaletteOpen = false;
 
   function hideAutocomplete() {
     commandMenu.hidden = true;
+    commandPaletteOpen = false;
+    view.querySelector("#wsp-attach").setAttribute("aria-expanded", "false");
     autocompleteKind = null;
     fileMentionRange = null;
     fileSearchRequest++;
@@ -1389,18 +1408,18 @@ function renderWorkspace(view) {
 
   function renderCommandMenu() {
     const mention = currentFileMention();
-    if (mention && state.projectId) {
+    if (!commandPaletteOpen && mention && state.projectId) {
       renderFileMenu(mention);
       return;
     }
     const draft = input.value.trimStart();
-    if (!draft.startsWith("/") || draft.includes("\n") || draft.includes(" ")) {
+    if (!commandPaletteOpen && (!draft.startsWith("/") || draft.includes("\n") || draft.includes(" "))) {
       hideAutocomplete();
       return;
     }
     autocompleteKind = "commands";
     fileMentionRange = null;
-    const query = draft.slice(1).toLocaleLowerCase();
+    const query = commandPaletteOpen ? "" : draft.slice(1).toLocaleLowerCase();
     commandMenu.replaceChildren(el("div", { class: "wsp-command-heading", text: "命令 · ↑ ↓ 选择 · Enter 选中" }));
     const commands = [...builtInCommands, ...state.commands.filter((item) =>
       !builtInCommands.some((builtIn) => builtIn.name === item.name))];
@@ -1413,6 +1432,7 @@ function renderWorkspace(view) {
       el("strong", { text: `/${command.name}` }), el("span", { text: command.description || "OpenCode 命令" })));
     }
     commandMenu.hidden = commandMenu.children.length === 1;
+    view.querySelector("#wsp-attach").setAttribute("aria-expanded", String(!commandMenu.hidden && commandPaletteOpen));
   }
 
   function updateCommandSelection() {
@@ -1435,6 +1455,12 @@ function renderWorkspace(view) {
   async function executeBuiltIn(name) {
     if (name === "help") { input.value = "/"; renderCommandMenu(); return true; }
     if (name === "new") { input.value = ""; await createSession(); return true; }
+    if (name === "compact" || name === "summarize") {
+      if (!state.sessionId) { toast("请先选择对话", "error"); return true; }
+      input.value = "";
+      await performSessionAction(state.projectId, activeSession(), "summarize");
+      return true;
+    }
     if (name === "models") { input.value = ""; openModelPicker(); return true; }
     if (name === "agents") { input.value = ""; agentSelect.focus(); return true; }
     if (name === "settings") { location.hash = "#/settings"; return true; }
@@ -1563,8 +1589,7 @@ function renderWorkspace(view) {
     refreshSelected();
   }
 
-  async function createSession() {
-    const projectId = state.projectId || state.projects[0]?.id;
+  async function createSession(projectId = state.projectId || state.projects[0]?.id) {
     if (!projectId) { openAddProject(); return; }
     try {
       const session = await api(`workspace/projects/${encodeURIComponent(projectId)}/sessions`, {
@@ -1613,14 +1638,14 @@ function renderWorkspace(view) {
     } });
     if (!window.__TAURI__?.dialog?.open) choose.hidden = true;
     const mask = el("div", { class: "wsp-modal-mask" },
-      el("div", { class: "wsp-modal" }, el("h2", { text: "添加项目" }),
-        el("p", { text: "选择一个本地项目目录。OpenCode 会在该目录启动后台服务并读取会话。" }),
+      el("div", { class: "wsp-modal", role: "dialog", "aria-modal": "true", "aria-label": "新建项目" }, el("h2", { text: "新建项目" }),
+        el("p", { text: "输入现有目录的绝对路径，或选择一个目录作为 OpenCode 工作区。" }),
         el("div", { class: "wsp-modal-row" }, pathInput, choose), errorLine,
         el("div", { class: "wsp-modal-actions" },
           el("button", { class: "wsp-mini", type: "button", text: "取消", onclick: () => mask.remove() }),
-          el("button", { class: "wsp-mini primary", type: "button", text: "添加项目", onclick: async () => {
+          el("button", { class: "wsp-mini primary", type: "button", text: "创建项目", onclick: async () => {
             const path = pathInput.value.trim();
-            if (!path) { errorLine.textContent = "请选择或填写项目目录"; errorLine.classList.remove("hidden"); return; }
+            if (!path) { errorLine.textContent = "请输入项目目录"; errorLine.classList.remove("hidden"); return; }
             try {
               const project = await api("workspace/projects", { method: "POST", body: { path }, silent: true });
               if (!alive()) return;
@@ -1636,14 +1661,57 @@ function renderWorkspace(view) {
     pathInput.focus();
   }
 
-  view.querySelector("#wsp-add").addEventListener("click", openAddProject);
-  view.querySelector("#wsp-new").addEventListener("click", createSession);
-  moreButton.addEventListener("click", () => {
-    if (actionMenu.hidden) { renderActionMenu(); actionMenu.hidden = false; moreButton.setAttribute("aria-expanded", "true"); }
-    else closeActionMenu();
-  });
+  function openRenameProject(project) {
+    const nameInput = el("input", { type: "text", value: project.name, maxlength: "100" });
+    const errorLine = el("p", { class: "wsp-question-error" });
+    const mask = el("div", { class: "wsp-modal-mask" },
+      el("div", { class: "wsp-modal", role: "dialog", "aria-modal": "true", "aria-label": "重命名工作区" },
+        el("h2", { text: "重命名工作区" }),
+        el("p", { text: "仅修改侧边栏中的显示名称，目录路径保持不变。" }), nameInput, errorLine,
+        el("div", { class: "wsp-modal-actions" },
+          el("button", { class: "wsp-mini", type: "button", text: "取消", onclick: () => mask.remove() }),
+          el("button", { class: "wsp-mini primary", type: "button", text: "保存", onclick: async () => {
+            const name = nameInput.value.trim();
+            if (!name) { errorLine.textContent = "请输入工作区名称"; return; }
+            try {
+              const updated = await api(`workspace/projects/${encodeURIComponent(project.id)}`, {
+                method: "PATCH", body: { name }, silent: true,
+              });
+              state.projects = state.projects.map((item) => item.id === project.id ? updated : item);
+              mask.remove(); renderSidebar(); renderHeader();
+            } catch (error) { errorLine.textContent = detail(error); }
+          } }))));
+    mask.addEventListener("click", (event) => { if (event.target === mask) mask.remove(); });
+    document.body.append(mask);
+    nameInput.focus(); nameInput.select();
+  }
+
+  async function openProjectDirectory(project) {
+    try {
+      await api(`workspace/projects/${encodeURIComponent(project.id)}/open`, { method: "POST", body: {}, silent: true });
+    } catch (error) { toast("打开目录失败：" + detail(error), "error"); }
+  }
+
+  async function removeProject(project) {
+    if (!window.confirm(`从工作区列表移除“${project.name}”？目录和 OpenCode 会话仍保留在磁盘上。`)) return;
+    try {
+      await api(`workspace/projects/${encodeURIComponent(project.id)}`, { method: "DELETE", silent: true });
+      state.projects = state.projects.filter((item) => item.id !== project.id);
+      state.sessions.delete(project.id);
+      state.errors.delete(project.id);
+      if (state.projectId === project.id) {
+        state.projectId = null; state.sessionId = null; state.messages = [];
+        workspaceSelection = { projectId: null, sessionId: null };
+        connectEvents(null);
+        if (state.projects.length) selectProject(state.projects[0].id);
+        else { renderSidebar(); renderHeader(); renderMain(); }
+      } else renderSidebar();
+    } catch (error) { toast("删除工作区失败：" + detail(error), "error"); }
+  }
+
+  view.querySelector("#wsp-new").addEventListener("click", openAddProject);
   const outsideActions = (event) => {
-    if (!actionMenu.hidden && !actionMenu.contains(event.target) && event.target !== moreButton) closeActionMenu();
+    if (!event.target.closest(".wsp-row-menu-wrap")) closeRowMenus();
   };
   document.addEventListener("pointerdown", outsideActions);
   addCleanup(() => document.removeEventListener("pointerdown", outsideActions));
@@ -1794,15 +1862,17 @@ function renderWorkspace(view) {
       if (alive()) { renderHeader(); renderMain(); }
     }
   });
-  input.addEventListener("input", () => { state.commandSelectedIndex = 0; renderCommandMenu(); });
-  input.addEventListener("click", () => renderCommandMenu());
+  input.addEventListener("input", () => { commandPaletteOpen = false; state.commandSelectedIndex = 0; renderCommandMenu(); });
+  input.addEventListener("click", () => { commandPaletteOpen = false; renderCommandMenu(); });
   input.addEventListener("keyup", (event) => {
     if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) renderCommandMenu();
   });
-  view.querySelector("#wsp-attach").addEventListener("click", () => imagePicker.click());
-  imagePicker.addEventListener("change", () => {
-    void addImageFiles(Array.from(imagePicker.files || []));
-    imagePicker.value = "";
+  view.querySelector("#wsp-attach").addEventListener("click", () => {
+    if (commandPaletteOpen) { hideAutocomplete(); return; }
+    commandPaletteOpen = true;
+    state.commandSelectedIndex = 0;
+    renderCommandMenu();
+    input.focus();
   });
   input.addEventListener("paste", (event) => {
     const files = Array.from(event.clipboardData?.items || [])

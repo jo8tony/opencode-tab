@@ -7,6 +7,8 @@ import binascii
 import hashlib
 import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import quote
 
@@ -27,7 +29,7 @@ def _project_id(path: str) -> str:
 
 def _project_info(item: dict) -> dict:
     path = str(Path(item["path"]).expanduser().resolve())
-    return {"id": _project_id(path), "path": path, "name": Path(path).name or path}
+    return {"id": _project_id(path), "path": path, "name": item.get("name") or Path(path).name or path}
 
 
 def _project_path(request: Request, project_id: str) -> str:
@@ -94,6 +96,37 @@ async def remove_project(project_id: str, request: Request) -> dict:
     deleted = request.app.state.runtime.terminal_projects.delete(path)
     await request.app.state.runtime.workspace.stop(path)
     return {"ok": deleted}
+
+
+class RenameProjectBody(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+@router.patch("/workspace/projects/{project_id}")
+def rename_project(project_id: str, body: RenameProjectBody, request: Request) -> dict:
+    path = _project_path(request, project_id)
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="请输入工作区名称")
+    item = request.app.state.runtime.terminal_projects.rename(path, name)
+    if item is None:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    return _project_info(item)
+
+
+@router.post("/workspace/projects/{project_id}/open")
+def open_project_directory(project_id: str, request: Request) -> dict:
+    path = _project_path(request, project_id)
+    if not Path(path).is_dir():
+        raise HTTPException(status_code=404, detail="项目目录不存在")
+    command = ["open", path] if sys.platform == "darwin" else (
+        ["explorer", path] if os.name == "nt" else ["xdg-open", path]
+    )
+    try:
+        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"无法打开目录：{exc.strerror or exc}") from exc
+    return {"ok": True}
 
 
 @router.get("/workspace/projects/{project_id}/sessions")
