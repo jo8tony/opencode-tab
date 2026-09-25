@@ -46,10 +46,8 @@ a:hover { text-decoration: underline; }
 }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand-logo {
-  display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; border-radius: 8px;
-  background: var(--accent-soft); color: var(--accent);
-  font-size: 16px; font-weight: 700;
+  object-fit: contain;
 }
 .brand-name { font-weight: 600; letter-spacing: .02em; }
 .brand-ver { font-size: 11px; color: var(--text-faint); }
