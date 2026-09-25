@@ -21,15 +21,16 @@ function renderWorkspace(view) {
   view.innerHTML = `
     <section class="wsp" id="wsp">
       <aside class="wsp-side" aria-label="项目与对话">
+        <div class="wsp-brand"><span class="wsp-brand-mark" aria-hidden="true">◇</span><span class="wsp-brand-copy"><strong>Sona Code</strong><small>桌面工作区</small></span></div>
         <div class="wsp-side-top">
-          <div class="wsp-side-title"><span>项目与对话</span><span id="wsp-project-count"></span></div>
           <div class="wsp-side-actions"><button class="wsp-new" id="wsp-new" type="button">＋ 新建对话</button><button class="wsp-add" id="wsp-add" type="button" title="添加项目" aria-label="添加项目">＋</button></div>
           <input class="wsp-search" id="wsp-search" type="search" placeholder="搜索项目和对话" aria-label="搜索项目和对话">
         </div>
-        <div class="wsp-side-list"><div class="wsp-side-label"><span>工作区</span><span>OpenCode</span></div><div id="wsp-projects"></div></div>
+        <div class="wsp-side-list"><div class="wsp-side-label"><span>项目与对话</span><span id="wsp-project-count"></span></div><div id="wsp-projects"></div></div>
         <div class="wsp-side-bottom" id="wsp-connection">正在检查 OpenCode…</div>
       </aside>
       <div class="wsp-main">
+        <nav class="wsp-global-nav" aria-label="主导航"><a class="active" href="#/workspace">工作区</a><a href="#/trajectory">轨迹</a><a href="#/calls">调用列表</a><a href="#/dashboard">仪表盘</a><a href="#/settings">设置</a><span class="wsp-nav-spacer"></span><span class="wsp-nav-note">代理观测与开发对话</span></nav>
         <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏">☰</button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" hidden>停止任务</button><span class="wsp-status" id="wsp-status">准备中</span></header>
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button></nav>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>

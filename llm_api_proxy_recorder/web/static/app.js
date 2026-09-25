@@ -680,8 +680,8 @@ async function renderCallDetail(view, id) {
 }
 
 /* ============================================================ 启动 */
-// 首次进入时写入实际路由，供终端的异步加载判断当前页面。
-if (!location.hash) history.replaceState(null, "", location.pathname + location.search + "#/terminal");
+// 首次进入时写入实际路由，供异步页面判断当前所在视图。
+if (!location.hash) history.replaceState(null, "", location.pathname + location.search + "#/workspace");
 window.addEventListener("hashchange", route);
 route();
 

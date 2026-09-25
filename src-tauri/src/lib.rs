@@ -181,7 +181,8 @@ pub fn run() {
 
             std::thread::spawn(move || {
                 if wait_for_recorder(&instance_id, Duration::from_secs(60)) {
-                    if let Ok(url) = url::Url::parse("http://127.0.0.1:8117/__recorder/") {
+                    if let Ok(url) = url::Url::parse("http://127.0.0.1:8117/__recorder/#/workspace")
+                    {
                         let _ = window.navigate(url);
                     }
                 }
