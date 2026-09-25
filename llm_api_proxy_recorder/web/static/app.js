@@ -199,6 +199,7 @@ function runCleanups() {
 }
 
 const routes = [
+  { re: /^#\/workspace$/, nav: "workspace", render: (view) => renderWorkspace(view) },
   { re: /^#\/dashboard$/, nav: "dashboard", render: (view) => renderDashboard(view) },
   { re: /^#\/calls$/, nav: "calls", render: (view) => renderCalls(view) },
   { re: /^#\/calls\/(.+)$/, nav: "calls", render: (view, m) => renderCallDetail(view, decodeURIComponent(m[1])) },
@@ -215,20 +216,21 @@ function setNav(name) {
 }
 
 function route() {
-  const hash = location.hash || "#/terminal";
+  const hash = location.hash || "#/workspace";
   runCleanups();
   const view = $("#view");
   view.replaceChildren(el("div", { class: "loading", text: "加载中…" }));
   for (const r of routes) {
     const m = hash.match(r.re);
     if (m) {
+      document.body.classList.toggle("workspace-route", r.nav === "workspace");
       setNav(r.nav);
-      document.title = "Sona Code · " + ({ dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", terminal: "终端", settings: "设置" }[r.nav] || "");
+      document.title = "Sona Code · " + ({ workspace: "工作区", dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", terminal: "终端", settings: "设置" }[r.nav] || "");
       r.render(view, m);
       return;
     }
   }
-  location.hash = "#/terminal";
+  location.hash = "#/workspace";
 }
 
 /* ============================================================ 仪表盘 */

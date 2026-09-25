@@ -20,6 +20,8 @@ from llm_api_proxy_recorder.recording.store import CallStore
 from llm_api_proxy_recorder.terminal import TerminalManager
 from llm_api_proxy_recorder.terminal.projects import TerminalProjectStore
 from llm_api_proxy_recorder.terminal.routes import router as terminal_router
+from llm_api_proxy_recorder.workspace import WorkspaceManager
+from llm_api_proxy_recorder.workspace.routes import router as workspace_router
 
 logger = logging.getLogger("llm_api_proxy_recorder")
 
@@ -64,9 +66,11 @@ class RuntimeState:
         self.store = CallStore(resolved_records_dir(config))
         self.terminal = TerminalManager()
         self.terminal_projects = TerminalProjectStore(config_path)
+        self.workspace = WorkspaceManager()
 
     async def apply_config(self, new_cfg: AppConfig) -> None:
         """热更新：换 config 引用；出站代理变化时重建客户端；记录目录变化时重建 store。"""
+        old_cfg = self.config
         old_proxy = self.config.outbound.proxy_url
         old_dir = resolved_records_dir(self.config)
         self.config = new_cfg
@@ -74,8 +78,16 @@ class RuntimeState:
             await self.upstream_client.rebuild(new_cfg.outbound.proxy_url)
         if resolved_records_dir(new_cfg) != old_dir:
             self.store = CallStore(resolved_records_dir(new_cfg))
+        if (
+            new_cfg.terminal != old_cfg.terminal
+            or new_cfg.upstreams != old_cfg.upstreams
+            or new_cfg.default_upstream != old_cfg.default_upstream
+            or new_cfg.server.port != old_cfg.server.port
+        ):
+            await self.workspace.shutdown()
 
     async def aclose(self) -> None:
+        await self.workspace.shutdown()
         await self.upstream_client.aclose()
 
 
@@ -123,6 +135,7 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
 
     # 终端 API（REST + WebSocket，同样先于兜底代理路由注册）
     app.include_router(terminal_router, prefix=f"{cfg.server.admin_prefix}/api")
+    app.include_router(workspace_router, prefix=f"{cfg.server.admin_prefix}/api")
 
     # 静态 Web UI：admin 路由已注册在前，不会被吞掉 {admin_prefix}/api/*
     static_dir = Path(__file__).parent / "web" / "static"

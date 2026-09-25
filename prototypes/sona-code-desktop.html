@@ -1,0 +1,911 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sona Code · 桌面对话原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas: #f5f7fa;
+      --sidebar: #f8f9fb;
+      --surface: #fff;
+      --surface-soft: #f8fafc;
+      --border: #e6eaf0;
+      --border-strong: #d8dee8;
+      --text: #202a37;
+      --muted: #637084;
+      --faint: #929bad;
+      --blue: #366fe8;
+      --blue-dark: #2858bd;
+      --blue-soft: #eaf1ff;
+      --green: #248557;
+      --green-soft: #e9f7ee;
+      --amber: #a66817;
+      --amber-soft: #fff5e4;
+      --red: #b84f4b;
+      --red-soft: #fff0ef;
+      --shadow: 0 12px 36px rgba(39, 54, 77, .07);
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; }
+    body { color: var(--text); background: var(--canvas); font: 14px/1.55 var(--sans); }
+    button, input, textarea, select { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: 3px solid rgba(54, 111, 232, .22);
+      outline-offset: 2px;
+    }
+
+    .app { display: grid; grid-template-columns: 292px minmax(0, 1fr); height: 100vh; min-height: 600px; }
+    .sidebar { min-width: 0; display: flex; flex-direction: column; background: var(--sidebar); border-right: 1px solid var(--border); }
+    .brand-row { height: 72px; padding: 0 18px; display: flex; align-items: center; gap: 11px; }
+    .brand-mark { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; color: white; background: linear-gradient(145deg, #4a82f4, #2c5dc4); box-shadow: 0 5px 12px rgba(54, 111, 232, .22); }
+    .brand-mark svg { width: 20px; height: 20px; }
+    .brand-title { font-size: 15px; font-weight: 750; letter-spacing: -.025em; }
+    .brand-subtitle { color: var(--faint); font-size: 11px; line-height: 1.2; }
+    .brand-spacer { flex: 1; }
+    .brand-row > .icon-button { display: none; }
+    .icon-button { width: 32px; height: 32px; border: 0; border-radius: 8px; display: inline-grid; place-items: center; background: transparent; color: var(--muted); }
+    .icon-button:hover { background: #edf1f7; color: var(--text); }
+    .icon-button svg, .button-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .sidebar-actions { padding: 9px 14px 16px; border-bottom: 1px solid var(--border); }
+    .new-button { width: 100%; height: 38px; display: flex; align-items: center; justify-content: center; gap: 8px; color: #fff; background: var(--blue); border: 1px solid var(--blue); border-radius: 9px; font-weight: 650; box-shadow: 0 4px 10px rgba(54, 111, 232, .17); }
+    .new-button:hover { background: var(--blue-dark); }
+    .new-button svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; }
+    .search-wrap { margin-top: 12px; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: white; border: 1px solid var(--border); border-radius: 9px; color: var(--faint); }
+    .search-wrap:focus-within { border-color: #a8bdf4; box-shadow: 0 0 0 3px rgba(54, 111, 232, .08); }
+    .search-wrap svg { width: 15px; height: 15px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 2; }
+    .search-wrap input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 12px; }
+    .search-wrap input::placeholder { color: #a4acb9; }
+    .shortcut { border: 1px solid var(--border); background: var(--surface-soft); border-radius: 4px; padding: 0 4px; color: var(--faint); font: 10px var(--mono); }
+    .sidebar-scroll { flex: 1; overflow: auto; padding: 17px 10px 22px; scrollbar-width: thin; }
+    .section-title { display: flex; align-items: center; justify-content: space-between; padding: 0 10px 10px; color: var(--faint); font-size: 11px; font-weight: 750; letter-spacing: .08em; }
+    .section-title .count { letter-spacing: 0; font-weight: 550; }
+    .project-group { margin-bottom: 12px; }
+    .project-heading { width: 100%; min-height: 37px; display: flex; align-items: center; gap: 9px; padding: 5px 8px; border: 0; border-radius: 8px; text-align: left; background: transparent; color: var(--text); }
+    .project-heading:hover { background: #eef1f6; }
+    .project-icon { width: 25px; height: 25px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 7px; font-size: 11px; font-weight: 750; }
+    .project-name { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12.5px; font-weight: 700; }
+    .project-count { color: var(--faint); font: 11px var(--mono); }
+    .chevron { width: 13px; height: 13px; flex: 0 0 auto; color: var(--faint); transition: transform .18s ease; }
+    .project-group.collapsed .chevron { transform: rotate(-90deg); }
+    .thread-list { margin: 2px 0 0 18px; padding-left: 10px; border-left: 1px solid #dce2eb; }
+    .project-group.collapsed .thread-list { display: none; }
+    .thread-button { width: 100%; display: block; border: 1px solid transparent; border-radius: 8px; background: transparent; text-align: left; padding: 8px 10px; color: var(--muted); }
+    .thread-button:hover { background: #edf1f7; }
+    .thread-button.selected { color: #1e4faa; background: var(--blue-soft); border-color: #d9e6ff; }
+    .thread-line { display: flex; gap: 6px; align-items: center; }
+    .thread-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; font-weight: 620; }
+    .thread-time { font-size: 10px; white-space: nowrap; color: var(--faint); }
+    .thread-preview { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--faint); font-size: 11px; margin-top: 1px; }
+    .thread-button.selected .thread-preview { color: #6b86ba; }
+    .empty-search { margin: 12px 10px; color: var(--muted); font-size: 12px; }
+    .sidebar-footer { border-top: 1px solid var(--border); padding: 13px 16px 16px; }
+    .server-row { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 650; color: var(--muted); }
+    .server-dot { width: 7px; height: 7px; border-radius: 50%; background: #e7a641; box-shadow: 0 0 0 3px #fff2db; }
+    .server-note { margin: 5px 0 0 14px; color: var(--faint); font-size: 10.5px; }
+
+    .workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); }
+    .global-nav { min-height: 45px; padding: 0 24px; display: flex; align-items: stretch; gap: 5px; overflow-x: auto; border-bottom: 1px solid var(--border); background: #fbfcfe; scrollbar-width: none; }
+    .global-nav::-webkit-scrollbar { display: none; }
+    .global-link { flex: 0 0 auto; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 11.5px; font-weight: 650; white-space: nowrap; }
+    .global-link:hover { color: var(--text); background: #f2f5fa; }
+    .global-link.active { color: var(--blue); border-bottom-color: var(--blue); }
+    .global-spacer { flex: 1; }
+    .global-note { align-self: center; flex: 0 0 auto; color: var(--faint); font-size: 10px; white-space: nowrap; }
+    .workspace-header { min-height: 73px; padding: 15px 28px 13px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 14px; }
+    .mobile-menu { display: none; }
+    .workspace-heading { min-width: 0; flex: 1; }
+    .breadcrumb { color: var(--faint); font-size: 11px; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .breadcrumb strong { color: var(--muted); font-weight: 600; }
+    .workspace-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 730; font-size: 17px; letter-spacing: -.015em; line-height: 1.55; }
+    .header-actions { display: flex; align-items: center; gap: 8px; }
+    .status-pill { display: inline-flex; align-items: center; gap: 6px; height: 27px; padding: 0 10px; border: 1px solid #f0dfbc; background: var(--amber-soft); color: var(--amber); border-radius: 99px; font-size: 11px; font-weight: 670; white-space: nowrap; }
+    .status-pill.complete { border-color: #cfe9d7; color: var(--green); background: var(--green-soft); }
+    .status-pill.quiet { border-color: var(--border); color: var(--muted); background: var(--surface-soft); }
+    .header-icon { border: 1px solid var(--border); background: #fff; }
+    .tabs { height: 44px; padding: 0 28px; border-bottom: 1px solid var(--border); display: flex; gap: 23px; }
+    .tab { height: 44px; padding: 0 2px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 12px; font-weight: 650; }
+    .tab:hover { color: var(--text); }
+    .tab.active { border-color: var(--blue); color: var(--blue); }
+    .workspace.global-view .tabs, .workspace.global-view .composer-dock { display: none; }
+    .work-scroll { flex: 1; min-height: 0; overflow: auto; background: linear-gradient(#fff, #fff 70%, #fcfdff); scrollbar-width: thin; }
+    .work-content { width: min(870px, calc(100% - 72px)); min-height: 100%; margin: 0 auto; padding: 31px 0 45px; }
+    .date-divider { display: flex; align-items: center; gap: 13px; margin: 0 0 28px; color: var(--faint); font-size: 11px; }
+    .date-divider::before, .date-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+    .message { margin-bottom: 26px; }
+    .user-message { display: flex; justify-content: flex-end; }
+    .user-bubble { max-width: min(670px, 92%); padding: 13px 17px; background: #eef3fc; border: 1px solid #e4ecfa; border-radius: 15px 15px 4px 15px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .assistant-message { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 12px; }
+    .assistant-avatar { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 10px; background: #eaf1ff; color: var(--blue); }
+    .assistant-avatar svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+    .message-meta { display: flex; align-items: center; gap: 8px; min-height: 26px; }
+    .message-meta strong { font-size: 12px; }
+    .message-meta span { color: var(--faint); font-size: 10.5px; }
+    .message-body { min-width: 0; }
+    .message-body p { margin: 7px 0 12px; color: #344256; line-height: 1.7; }
+    .message-body p:last-child { margin-bottom: 0; }
+    .message-body code, .detail-card code { font: 11px var(--mono); padding: 2px 4px; border-radius: 4px; background: #f0f3f8; color: #40506a; }
+    .message-body ul { padding-left: 18px; margin: 7px 0 0; color: #344256; }
+    .message-body li { margin: 4px 0; }
+    .detail-card { border: 1px solid var(--border); border-radius: 10px; background: #fff; margin: 15px 0; overflow: hidden; }
+    .card-head { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 9px 13px; background: #fbfcfe; border-bottom: 1px solid var(--border); font-size: 11.5px; font-weight: 700; }
+    .card-head .head-symbol { width: 21px; height: 21px; border-radius: 6px; display: grid; place-items: center; background: #edf3ff; color: var(--blue); font: 12px var(--mono); }
+    .card-head .head-spacer { flex: 1; }
+    .card-head .subtle { color: var(--faint); font-size: 10px; font-weight: 550; }
+    .activity-row { min-height: 37px; display: flex; align-items: center; gap: 9px; padding: 7px 13px; border-top: 1px solid #f1f3f6; color: var(--muted); font-size: 11.5px; }
+    .activity-row:first-child { border-top: 0; }
+    .activity-check { color: var(--green); font-size: 14px; font-weight: 700; }
+    .activity-row span:last-child { margin-left: auto; color: var(--faint); font-size: 10px; white-space: nowrap; }
+    .change-summary { display: flex; align-items: center; gap: 12px; padding: 13px; }
+    .file-stack { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #dce6fb; border-radius: 9px; background: #f0f5ff; color: var(--blue); font: 16px var(--mono); }
+    .change-label { flex: 1; min-width: 0; }
+    .change-label strong { display: block; font-size: 11.5px; }
+    .change-label span { display: block; color: var(--faint); font-size: 10.5px; }
+    .change-count { color: var(--green); font: 11px var(--mono); }
+    .text-action { padding: 5px 0; border: 0; background: none; color: var(--blue); font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .text-action:hover { text-decoration: underline; }
+    .permission-card { border: 1px solid #f0ddb8; border-radius: 10px; background: #fffbf4; padding: 14px 16px; margin: 18px 0; }
+    .permission-card.resolved { border-color: var(--border); background: var(--surface-soft); }
+    .permission-title { display: flex; gap: 9px; align-items: center; color: #704e1f; font-size: 12px; font-weight: 750; }
+    .permission-card.resolved .permission-title { color: var(--muted); }
+    .permission-icon { width: 21px; height: 21px; border-radius: 6px; display: grid; place-items: center; background: #fff0cd; color: #aa7325; font-size: 13px; }
+    .permission-card.resolved .permission-icon { background: #e7ebf0; color: var(--muted); }
+    .permission-desc { padding-left: 30px; margin: 4px 0 10px; color: #78694e; font-size: 11.5px; }
+    .permission-command { margin-left: 30px; padding: 8px 10px; overflow: auto; border-radius: 6px; background: #fff; border: 1px solid #f0e6d4; color: #4e5867; font: 11px var(--mono); }
+    .permission-actions { display: flex; gap: 7px; margin: 11px 0 0 30px; }
+    .small-primary, .small-secondary { height: 29px; padding: 0 11px; border-radius: 7px; font-size: 11px; font-weight: 700; }
+    .small-primary { background: var(--blue); border: 1px solid var(--blue); color: #fff; }
+    .small-primary:hover { background: var(--blue-dark); }
+    .small-secondary { background: #fff; border: 1px solid #e6d9c1; color: #6b5b42; }
+    .small-secondary:hover { background: #f9f4ea; }
+    .permission-outcome { color: var(--muted); font-size: 11.5px; margin: 9px 0 0 30px; }
+    .demo-response { margin: 10px 0 0 44px; padding: 9px 12px; color: var(--muted); background: #f7f9fc; border-left: 2px solid #a8bcdf; font-size: 11.5px; }
+
+    .composer-dock { z-index: 2; padding: 15px 28px 19px; background: linear-gradient(rgba(255,255,255,.93), #fff 24%); border-top: 1px solid var(--border); }
+    .composer { max-width: 870px; margin: auto; border: 1px solid var(--border-strong); border-radius: 12px; background: #fff; box-shadow: 0 5px 24px rgba(45, 65, 91, .07); }
+    .composer:focus-within { border-color: #aec4f4; box-shadow: 0 0 0 3px rgba(54, 111, 232, .06), 0 5px 24px rgba(45, 65, 91, .06); }
+    .composer textarea { display: block; width: 100%; min-height: 66px; max-height: 165px; padding: 13px 15px 2px; resize: none; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.5; }
+    .composer textarea::placeholder { color: #9aa4b3; }
+    .composer-bottom { display: flex; align-items: center; gap: 9px; padding: 7px 9px 9px 14px; }
+    .model-chip { padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: var(--surface-soft); font-size: 10.5px; }
+    .composer-hint { color: var(--faint); font-size: 10px; }
+    .composer-spacer { flex: 1; }
+    .send-button { width: 31px; height: 31px; display: grid; place-items: center; border: 0; border-radius: 8px; color: #fff; background: var(--blue); }
+    .send-button:hover { background: var(--blue-dark); }
+    .send-button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .composer-caption { max-width: 870px; margin: 6px auto 0; text-align: center; color: var(--faint); font-size: 10px; }
+
+    .panel-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 21px; }
+    .panel-intro h2 { margin: 0 0 4px; font-size: 18px; letter-spacing: -.02em; }
+    .panel-intro p { margin: 0; color: var(--muted); font-size: 11.5px; }
+    .demo-tag { padding: 4px 8px; border-radius: 6px; background: #f0f3f8; color: var(--faint); font-size: 10px; white-space: nowrap; }
+    .diff-overview { display: flex; gap: 11px; margin-bottom: 17px; }
+    .metric { flex: 1; padding: 12px 14px; background: #fbfcfe; border: 1px solid var(--border); border-radius: 9px; }
+    .metric strong { display: block; font: 16px var(--mono); }
+    .metric span { color: var(--faint); font-size: 10.5px; }
+    .metric.add strong { color: var(--green); }
+    .metric.remove strong { color: var(--red); }
+    .diff-file { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 13px; }
+    .diff-file-head { display: flex; align-items: center; gap: 8px; padding: 10px 13px; background: #fafbfd; border-bottom: 1px solid var(--border); font: 11px var(--mono); }
+    .diff-file-head .head-spacer { flex: 1; }
+    .diff-file-head .file-badge { padding: 2px 5px; border-radius: 4px; background: #e9f7ee; color: var(--green); font: 9px var(--sans); font-weight: 700; }
+    .diff-file-head .head-spacer { flex: 1; }
+    .diff-file-head .line-stats { color: var(--green); }
+    .diff-body { margin: 0; padding: 8px 0; overflow-x: auto; background: #fff; font: 11px/1.8 var(--mono); }
+    .diff-line { display: flex; min-width: max-content; white-space: pre; padding-right: 12px; }
+    .diff-line .number { width: 42px; flex: 0 0 42px; text-align: right; padding-right: 13px; margin-right: 12px; border-right: 1px solid #e9edf3; color: #a1aab8; user-select: none; }
+    .diff-line.added { background: #effaf3; color: #286448; }
+    .diff-line.removed { background: #fff1f0; color: #a14946; }
+    .diff-line.context { color: #627087; }
+    .trace-list { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .trace-row { display: grid; grid-template-columns: 82px 13px minmax(0,1fr) auto; align-items: start; gap: 12px; padding: 15px 16px; border-top: 1px solid var(--border); }
+    .trace-row:first-child { border-top: 0; }
+    .trace-time { color: var(--faint); font: 10px var(--mono); padding-top: 3px; }
+    .trace-dot { width: 8px; height: 8px; margin-top: 5px; background: var(--blue); border-radius: 50%; box-shadow: 0 0 0 4px var(--blue-soft); }
+    .trace-dot.green { background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
+    .trace-dot.amber { background: #d79c36; box-shadow: 0 0 0 4px var(--amber-soft); }
+    .trace-content strong { display: block; font-size: 11.5px; }
+    .trace-content span { display: block; color: var(--muted); font-size: 10.5px; margin-top: 3px; }
+    .trace-duration { color: var(--faint); font: 10px var(--mono); padding-top: 3px; }
+    .filter-panel { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; padding: 14px; margin: 0 0 14px; border: 1px solid var(--border); border-radius: 10px; background: #fbfcfe; }
+    .filter-field { display: grid; gap: 5px; min-width: 125px; }
+    .filter-field.wide { flex: 1; min-width: 170px; }
+    .filter-field label { color: var(--faint); font-size: 10px; font-weight: 700; }
+    .filter-field input, .filter-field select { width: 100%; height: 32px; padding: 0 9px; border: 1px solid var(--border-strong); border-radius: 7px; background: #fff; color: var(--text); font-size: 11px; outline: 0; }
+    .filter-field input:focus, .filter-field select:focus { border-color: #a8bdf4; }
+    .filter-button { height: 32px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 7px; background: #fff; color: var(--text); font-size: 11px; font-weight: 700; }
+    .filter-button:hover { background: #f2f5fa; }
+    .data-card { overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+    .data-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+    .data-card-head strong { font-size: 12px; }
+    .data-card-head span { color: var(--faint); font-size: 10px; }
+    .table-scroll { overflow-x: auto; }
+    .data-table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; font-size: 11px; }
+    .data-table th { padding: 9px 12px; background: #fafbfd; color: var(--faint); font-weight: 700; border-bottom: 1px solid var(--border); }
+    .data-table td { padding: 10px 12px; color: var(--muted); border-bottom: 1px solid #f0f2f6; }
+    .data-table tr:last-child td { border-bottom: 0; }
+    .data-table td:first-child { color: var(--text); }
+    .data-table .mono { font-family: var(--mono); font-size: 10.5px; }
+    .table-action { padding: 3px 6px; border: 0; border-radius: 5px; background: var(--blue-soft); color: var(--blue); font-size: 10px; font-weight: 700; }
+    .table-action:hover { background: #dae8ff; }
+    .result-tag { display: inline-block; padding: 2px 7px; border-radius: 99px; background: var(--green-soft); color: var(--green); font-size: 10px; font-weight: 700; }
+    .result-tag.error { color: var(--red); background: var(--red-soft); }
+    .detail-back { display: inline-flex; margin-bottom: 14px; padding: 4px 0; border: 0; background: none; color: var(--blue); font-size: 11px; font-weight: 700; }
+    .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; }
+    .detail-grid div { padding: 13px 15px; border-bottom: 1px solid var(--border); }
+    .detail-grid div:nth-child(odd) { border-right: 1px solid var(--border); }
+    .detail-grid dt { color: var(--faint); font-size: 10px; }
+    .detail-grid dd { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--text); font: 11px/1.45 var(--mono); }
+    .info-panel { margin-top: 14px; padding: 13px 15px; border: 1px solid var(--border); border-radius: 9px; background: #fafbfd; color: var(--muted); font-size: 11px; line-height: 1.7; }
+    .global-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 15px; }
+    .setting-row { display: flex; justify-content: space-between; gap: 16px; padding: 15px 16px; border-bottom: 1px solid var(--border); font-size: 11.5px; }
+    .setting-row:last-child { border-bottom: 0; }
+    .setting-row strong { display: block; }
+    .setting-row small { display: block; color: var(--faint); margin-top: 3px; }
+    .setting-row > span { color: var(--muted); text-align: right; font-family: var(--mono); font-size: 10.5px; }
+    .empty-state { min-height: 370px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: var(--muted); }
+    .empty-state .empty-icon { width: 52px; height: 52px; display: grid; place-items: center; margin-bottom: 12px; background: var(--blue-soft); color: var(--blue); border-radius: 16px; font-size: 24px; }
+    .empty-state h2 { margin: 0 0 6px; color: var(--text); font-size: 16px; }
+    .empty-state p { margin: 0; max-width: 280px; font-size: 11.5px; }
+    .toast { position: fixed; bottom: 120px; left: 50%; z-index: 20; transform: translateX(-50%) translateY(9px); padding: 8px 13px; border-radius: 8px; background: #263343; color: white; box-shadow: var(--shadow); font-size: 11px; opacity: 0; pointer-events: none; transition: opacity .16s, transform .16s; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .mobile-scrim { display: none; }
+
+    @media (max-width: 900px) {
+      .app { grid-template-columns: 255px minmax(0, 1fr); }
+      .workspace-header { padding-inline: 18px; }
+      .tabs { padding-inline: 18px; }
+      .composer-dock { padding-inline: 17px; }
+      .work-content { width: min(870px, calc(100% - 36px)); }
+    }
+    @media (max-width: 700px) {
+      .app { display: block; min-height: 0; }
+      .sidebar { position: fixed; z-index: 12; top: 0; bottom: 0; left: 0; width: min(292px, 85vw); transform: translateX(-101%); transition: transform .2s; box-shadow: var(--shadow); }
+      .brand-row > .icon-button { display: inline-grid; }
+      .app.sidebar-open .sidebar { transform: translateX(0); }
+      .mobile-scrim { position: fixed; inset: 0; z-index: 11; background: rgba(29, 43, 61, .32); }
+      .app.sidebar-open .mobile-scrim { display: block; }
+      .workspace { height: 100vh; }
+      .global-nav { padding-inline: 8px; }
+      .global-link { padding-inline: 10px; }
+      .global-note { display: none; }
+      .mobile-menu { display: inline-grid; }
+      .workspace-header { min-height: 66px; padding: 10px 13px; }
+      .header-actions .header-icon { display: none; }
+      .tabs { padding-inline: 16px; }
+      .work-content { width: calc(100% - 30px); padding-top: 22px; }
+      .composer-dock { padding: 9px 10px 12px; }
+      .composer-caption { display: none; }
+      .status-pill { padding-inline: 7px; font-size: 10px; }
+      .trace-row { grid-template-columns: 55px 10px minmax(0,1fr); gap: 8px; }
+      .trace-duration { display: none; }
+      .global-cards { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar" aria-label="项目和对话">
+      <div class="brand-row">
+        <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.3 20.8 7v10L12 21.7 3.2 17V7L12 2.3Zm0 3.2L6 8.7v6.6l6 3.2 6-3.2V8.7l-6-3.2Zm0 2.2 4 2.2v4.2l-4 2.2-4-2.2V9.9l4-2.2Z"/></svg></div>
+        <div><div class="brand-title">Sona Code</div><div class="brand-subtitle">桌面工作区</div></div>
+        <div class="brand-spacer"></div>
+        <button class="icon-button" id="sidebarClose" title="收起项目栏" aria-label="收起项目栏"><svg viewBox="0 0 24 24"><path d="M15 18 9 12l6-6"/></svg></button>
+      </div>
+      <div class="sidebar-actions">
+        <button class="new-button" id="newConversation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>新建对话</button>
+        <label class="search-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input id="search" type="search" placeholder="搜索项目和对话" aria-label="搜索项目和对话"><span class="shortcut">⌘K</span></label>
+      </div>
+      <div class="sidebar-scroll">
+        <div class="section-title"><span>项目与对话</span><span class="count" id="projectCount"></span></div>
+        <div id="projectList"></div>
+      </div>
+      <div class="sidebar-footer"><div class="server-row"><span class="server-dot"></span>本地演示模式</div><div class="server-note">界面示例 · 未连接 OpenCode 服务</div></div>
+    </aside>
+    <div class="mobile-scrim" id="mobileScrim"></div>
+    <main class="workspace">
+      <nav class="global-nav" aria-label="主导航"><button class="global-link active" type="button" data-section="workspace">工作区</button><button class="global-link" type="button" data-section="trajectory">轨迹</button><button class="global-link" type="button" data-section="calls">调用列表</button><button class="global-link" type="button" data-section="dashboard">仪表盘</button><button class="global-link" type="button" data-section="settings">设置</button><span class="global-spacer"></span><span class="global-note">代理观测与开发对话</span></nav>
+      <header class="workspace-header">
+        <button class="icon-button mobile-menu" id="mobileMenu" aria-label="打开项目栏"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+        <div class="workspace-heading"><div class="breadcrumb" id="breadcrumb"></div><div class="workspace-title" id="workspaceTitle"></div></div>
+        <div class="header-actions"><span class="status-pill" id="statusPill">等待确认</span><button class="icon-button header-icon" id="moreButton" title="关于此原型" aria-label="关于此原型"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button></div>
+      </header>
+      <nav class="tabs" aria-label="工作区视图"><button class="tab active" type="button" data-tab="chat">对话</button><button class="tab" type="button" data-tab="changes">文件改动</button><button class="tab" type="button" data-tab="trace">活动</button></nav>
+      <div class="work-scroll" id="workScroll"><div class="work-content" id="workContent"></div></div>
+      <div class="composer-dock"><form class="composer" id="composer"><textarea id="prompt" aria-label="输入消息" placeholder="向 Sona Code 描述你的需求…" rows="2"></textarea><div class="composer-bottom"><span class="model-chip">模型 · 自动选择</span><span class="composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="composer-spacer"></span><button class="send-button" type="submit" title="发送演示消息" aria-label="发送演示消息"><svg viewBox="0 0 24 24"><path d="M5 12h14m-7-7 7 7-7 7"/></svg></button></div></form><div class="composer-caption">交互原型：发送消息只会生成本地演示回复，不会执行命令或调用模型</div></div>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script>
+    const projects = [
+      { id: "proxy", name: "llm-proxy", initials: "LP", tint: "#e9efff", ink: "#426ac2", path: "~/Desktop/projs/llm-proxy", open: true, conversations: [
+        { id: "proxy-timeout", title: "整理代理超时配置", preview: "等待确认完整测试", time: "刚刚", prompt: "帮我把代理请求的超时配置收拢到设置页，并在请求超时时显示清晰的错误提示。", featured: true },
+        { id: "proxy-stream", title: "排查 SSE 流式中断", preview: "定位响应转发问题", time: "昨天", prompt: "排查 SSE 流式响应在客户端断开连接后的清理问题。" },
+        { id: "proxy-redaction", title: "完善敏感请求头脱敏", preview: "补充录制用例", time: "周二", prompt: "检查调用记录中的敏感请求头是否已正确脱敏。" }
+      ] },
+      { id: "dashboard", name: "client-dashboard", initials: "CD", tint: "#e8f6f0", ink: "#29875e", path: "~/Desktop/projs/client-dashboard", open: true, conversations: [
+        { id: "dashboard-filter", title: "重做筛选面板", preview: "整理表单与筛选状态", time: "周一", prompt: "请简化报表页的筛选面板，并保留当前筛选状态。" },
+        { id: "dashboard-chart", title: "修复趋势图空状态", preview: "图表不再闪烁", time: "上周", prompt: "趋势图没有数据时，请给出明确的空状态。" }
+      ] },
+      { id: "docs", name: "docs-site", initials: "DS", tint: "#fff0e6", ink: "#b87535", path: "~/Desktop/projs/docs-site", open: false, conversations: [
+        { id: "docs-nav", title: "文档侧栏导航优化", preview: "调整页面层级", time: "上周", prompt: "让文档站的侧栏层级更清晰。" }
+      ] }
+    ];
+
+    const state = { selectedId: "proxy-timeout", tab: "chat", section: "workspace", permission: "pending", query: "", callDetail: null, trajectoryDetail: null, callFilter: { date: "all", status: "all", query: "" }, trajectoryQuery: "", extraMessages: new Map() };
+    const sampleCalls = [
+      { id: "call-1048", time: "今天 10:42:16", model: "deepseek-chat", upstream: "main", status: "成功", duration: "2.4 s", tokens: "1,824 / 312", path: "/up/main/chat/completions" },
+      { id: "call-1047", time: "今天 10:42:08", model: "deepseek-chat", upstream: "main", status: "成功", duration: "1.3 s", tokens: "1,106 / 228", path: "/up/main/chat/completions" },
+      { id: "call-1046", time: "今天 09:16:31", model: "claude-sonnet", upstream: "anthropic", status: "错误", duration: "15.0 s", tokens: "0 / 0", path: "/up/anthropic/messages" },
+      { id: "call-1045", time: "昨天 17:28:04", model: "gpt-4.1", upstream: "openai", status: "成功", duration: "3.8 s", tokens: "2,405 / 468", path: "/up/openai/chat/completions" }
+    ];
+    const sampleTrajectories = [
+      { id: "session-proxy", preview: "整理代理超时配置并完善错误提示", model: "deepseek-chat", calls: 4, input: "5.4k", output: "1.2k", latest: "今天 10:42", status: "成功" },
+      { id: "session-dashboard", preview: "简化报表页的筛选面板", model: "claude-sonnet", calls: 6, input: "8.1k", output: "2.0k", latest: "昨天 17:28", status: "成功" },
+      { id: "session-error", preview: "排查上游连接超时", model: "claude-sonnet", calls: 2, input: "1.5k", output: "0", latest: "今天 09:16", status: "错误" }
+    ];
+    const $ = (selector) => document.querySelector(selector);
+
+    function node(tag, className, content) {
+      const item = document.createElement(tag);
+      if (className) item.className = className;
+      if (content !== undefined) item.textContent = content;
+      return item;
+    }
+
+    function current() {
+      for (const project of projects) {
+        const conversation = project.conversations.find((item) => item.id === state.selectedId);
+        if (conversation) return { project, conversation };
+      }
+      return { project: projects[0], conversation: projects[0].conversations[0] };
+    }
+
+    function renderSidebar() {
+      const list = $("#projectList");
+      list.replaceChildren();
+      $("#projectCount").textContent = `${projects.length} 个项目`;
+      const query = state.query.trim().toLocaleLowerCase();
+      let visible = 0;
+
+      for (const project of projects) {
+        const projectMatches = project.name.toLocaleLowerCase().includes(query);
+        const conversations = project.conversations.filter((item) => !query || projectMatches || `${item.title} ${item.preview}`.toLocaleLowerCase().includes(query));
+        if (query && !projectMatches && !conversations.length) continue;
+        visible += 1;
+
+        const group = node("section", `project-group${project.open || query ? "" : " collapsed"}`);
+        const heading = node("button", "project-heading");
+        heading.type = "button";
+        heading.setAttribute("aria-expanded", String(project.open || Boolean(query)));
+        const icon = node("span", "project-icon", project.initials);
+        icon.style.background = project.tint;
+        icon.style.color = project.ink;
+        heading.append(icon, node("span", "project-name", project.name), node("span", "project-count", String(project.conversations.length)));
+        const chevron = node("span", "chevron");
+        chevron.innerHTML = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m4 6 4 4 4-4"/></svg>';
+        heading.append(chevron);
+        heading.addEventListener("click", () => { project.open = !project.open; renderSidebar(); });
+        group.append(heading);
+
+        const threadList = node("div", "thread-list");
+        for (const item of conversations) {
+          const button = node("button", `thread-button${item.id === state.selectedId ? " selected" : ""}`);
+          button.type = "button";
+          button.setAttribute("aria-current", item.id === state.selectedId ? "page" : "false");
+          const line = node("span", "thread-line");
+          line.append(node("span", "thread-title", item.title), node("span", "thread-time", item.time));
+          button.append(line, node("span", "thread-preview", item.preview));
+          button.addEventListener("click", () => selectConversation(item.id));
+          threadList.append(button);
+        }
+        group.append(threadList);
+        list.append(group);
+      }
+      if (!visible) list.append(node("p", "empty-search", "没有找到匹配的项目或对话。"));
+    }
+
+    function renderHeader() {
+      const inWorkspace = state.section === "workspace";
+      const { project, conversation } = current();
+      const labels = { trajectory: "轨迹", calls: "调用列表", dashboard: "仪表盘", settings: "设置" };
+      $("#breadcrumb").textContent = inWorkspace ? `${project.name}  /  对话记录` : `代理观测  /  ${labels[state.section]}`;
+      $("#workspaceTitle").textContent = inWorkspace ? conversation.title : labels[state.section];
+      const pill = $("#statusPill");
+      if (!inWorkspace) {
+        pill.textContent = "静态示例";
+        pill.className = "status-pill quiet";
+      } else if (conversation.featured) {
+        pill.textContent = state.permission === "pending" ? "等待确认" : state.permission === "allowed" ? "已允许执行" : "已拒绝执行";
+        pill.className = `status-pill${state.permission === "allowed" ? " complete" : state.permission === "denied" ? " quiet" : ""}`;
+      } else {
+        pill.textContent = "本地演示";
+        pill.className = "status-pill quiet";
+      }
+      document.querySelectorAll(".tab").forEach((tab) => {
+        tab.classList.toggle("active", tab.dataset.tab === state.tab);
+        tab.setAttribute("aria-current", tab.dataset.tab === state.tab ? "page" : "false");
+      });
+      document.querySelectorAll(".global-link").forEach((link) => {
+        link.classList.toggle("active", link.dataset.section === state.section);
+        link.setAttribute("aria-current", link.dataset.section === state.section ? "page" : "false");
+      });
+      $(".workspace").classList.toggle("global-view", !inWorkspace);
+    }
+
+    function addUserMessage(container, text) {
+      const message = node("div", "message user-message");
+      message.append(node("div", "user-bubble", text));
+      container.append(message);
+    }
+
+    function addAssistantMessage(container, paragraphs) {
+      const message = node("div", "message assistant-message");
+      const avatar = node("div", "assistant-avatar");
+      avatar.innerHTML = '<svg viewBox="0 0 24 24"><path d="m12 2 8.5 5v10L12 22l-8.5-5V7L12 2Z"/><path d="m8 10 4-2 4 2v4l-4 2-4-2v-4Z"/></svg>';
+      const body = node("div", "message-body");
+      const meta = node("div", "message-meta");
+      meta.append(node("strong", "", "Sona"), node("span", "", "通过 OpenCode 处理 · 演示内容"));
+      body.append(meta);
+      paragraphs.forEach((text) => body.append(node("p", "", text)));
+      message.append(avatar, body);
+      container.append(message);
+      return body;
+    }
+
+    function addFeaturedContent(container) {
+      const body = addAssistantMessage(container, ["我检查了代理配置与设置页的现有入口。超时参数可以集中展示在连接设置中，并让错误信息包含上游名称和等待时长。"]);
+
+      const activity = node("div", "detail-card");
+      activity.innerHTML = '<div class="card-head"><span class="head-symbol">›_</span><span>已完成的步骤</span><span class="head-spacer"></span><span class="subtle">3 项活动</span></div><div class="activity-row"><b class="activity-check">✓</b>读取代理路由与配置定义<span>1.2 秒</span></div><div class="activity-row"><b class="activity-check">✓</b>检查设置页字段与提示文案<span>0.8 秒</span></div><div class="activity-row"><b class="activity-check">✓</b>准备两处示例改动<span>2.4 秒</span></div>';
+      body.append(activity, node("p", "", "改动会集中在配置定义和设置界面；下方可以直接检查文件差异。"));
+
+      const change = node("div", "detail-card");
+      const summary = node("div", "change-summary");
+      const label = node("div", "change-label");
+      label.append(node("strong", "", "2 个文件的示例改动"), node("span", "", "config.py · settings.js"));
+      const action = node("button", "text-action", "查看差异 →");
+      action.type = "button";
+      action.addEventListener("click", () => setTab("changes"));
+      summary.append(node("div", "file-stack", "{ }") , label, node("span", "change-count", "+18  −4"), action);
+      change.append(summary);
+      body.append(change);
+
+      const permission = node("div", `permission-card${state.permission === "pending" ? "" : " resolved"}`);
+      const title = node("div", "permission-title");
+      title.append(node("span", "permission-icon", state.permission === "pending" ? "!" : "✓"), node("span", "", "需要确认 · 运行完整测试"));
+      permission.append(title, node("p", "permission-desc", "OpenCode 请求在当前项目目录执行以下命令。"), node("div", "permission-command", "python -m pytest tests/ -q"));
+      if (state.permission === "pending") {
+        const actions = node("div", "permission-actions");
+        const allow = node("button", "small-primary", "允许一次");
+        const deny = node("button", "small-secondary", "拒绝");
+        allow.type = deny.type = "button";
+        allow.addEventListener("click", () => resolvePermission("allowed"));
+        deny.addEventListener("click", () => resolvePermission("denied"));
+        actions.append(allow, deny);
+        permission.append(actions);
+      } else {
+        permission.append(node("div", "permission-outcome", state.permission === "allowed" ? "已允许一次（演示状态；未执行命令）" : "已拒绝（演示状态；未执行命令）"));
+      }
+      body.append(permission);
+    }
+
+    function renderChat(container) {
+      const { conversation } = current();
+      if (!conversation.prompt && !(state.extraMessages.get(conversation.id) || []).length) {
+        const empty = node("div", "empty-state");
+        empty.innerHTML = '<div class="empty-icon" aria-hidden="true">✦</div><h2>开始一段新对话</h2><p>描述你想完成的开发任务。这里会展示消息、工具操作、改动和权限请求。</p>';
+        container.append(empty);
+        return;
+      }
+      container.append(node("div", "date-divider", "今天 · 对话示例"));
+      if (conversation.prompt) addUserMessage(container, conversation.prompt);
+      if (conversation.featured) addFeaturedContent(container);
+      else if (conversation.prompt) addAssistantMessage(container, ["我会先检查相关文件和当前实现，再给出具体改动。这是一条用于展示布局的示例回复。"]);
+
+      for (const item of state.extraMessages.get(conversation.id) || []) {
+        addUserMessage(container, item);
+        addAssistantMessage(container, ["已收到你的消息。这是离线界面的演示回复；接入 OpenCode Server 后，此处会展示真实的流式结果与工具步骤。"]);
+      }
+    }
+
+    function diffFile(title, stats, rows) {
+      const file = node("section", "diff-file");
+      const head = node("div", "diff-file-head");
+      head.append(node("span", "file-badge", "修改"), node("span", "", title), node("span", "head-spacer"), node("span", "line-stats", stats));
+      file.append(head);
+      const body = node("div", "diff-body");
+      for (const [number, type, content] of rows) {
+        const line = node("div", `diff-line ${type}`);
+        line.append(node("span", "number", number), node("span", "", content));
+        body.append(line);
+      }
+      file.append(body);
+      return file;
+    }
+
+    function renderChanges(container) {
+      const { conversation } = current();
+      const intro = node("div", "panel-intro");
+      const text = node("div");
+      text.append(node("h2", "", "文件改动"), node("p", "", conversation.featured ? "在同一处查看当前对话涉及的文件与代码差异。" : "该对话暂无示例文件改动。"));
+      intro.append(text, node("span", "demo-tag", "静态示例数据"));
+      container.append(intro);
+      if (!conversation.featured) return;
+      const overview = node("div", "diff-overview");
+      for (const [value, label, className] of [["2", "修改文件", ""], ["+18", "新增行", "add"], ["−4", "删除行", "remove"]]) {
+        const metric = node("div", `metric ${className}`);
+        metric.append(node("strong", "", value), node("span", "", label));
+        overview.append(metric);
+      }
+      container.append(overview);
+      container.append(diffFile("llm_api_proxy_recorder/config.py", "+10  −2", [
+        ["106", "context", " class ProxyConfig(BaseModel):"],
+        ["107", "removed", "-    timeout: float = 60.0"],
+        ["107", "added", "+    connect_timeout_seconds: float = 15.0"],
+        ["108", "added", "+    response_timeout_seconds: float = 120.0"],
+        ["109", "context", "     retry_count: int = 0"]
+      ]));
+      container.append(diffFile("llm_api_proxy_recorder/web/static/settings.js", "+8  −2", [
+        ["242", "context", " // 连接设置"],
+        ["243", "removed", "-field(\"请求超时\", timeoutInput),"],
+        ["243", "added", "+field(\"连接超时\", connectTimeoutInput),"],
+        ["244", "added", "+field(\"响应超时\", responseTimeoutInput),"],
+        ["245", "context", " // 保存后对新请求生效"]
+      ]));
+    }
+
+    function renderTrace(container) {
+      const { conversation } = current();
+      const intro = node("div", "panel-intro");
+      const text = node("div");
+      text.append(node("h2", "", "对话活动"), node("p", "", conversation.featured ? "这里汇总当前对话的模型请求和工具步骤；顶部“轨迹”查看代理记录的全局会话。" : "该对话暂无示例活动。"));
+      intro.append(text, node("span", "demo-tag", "静态示例数据"));
+      container.append(intro);
+      if (!conversation.featured) return;
+      const timeline = node("div", "trace-list");
+      const events = [
+        ["10:42:08", "模型请求", "为代理超时配置生成修改计划", "1.3 秒", ""],
+        ["10:42:10", "读取文件", "config.py · settings.js", "0.8 秒", "green"],
+        ["10:42:13", "文件改动", "准备 2 个文件的示例差异", "2.4 秒", "green"],
+        ["10:42:16", "等待权限", "执行 python -m pytest tests/ -q", "待确认", "amber"]
+      ];
+      for (const [time, title, detail, duration, color] of events) {
+        const row = node("div", "trace-row");
+        const desc = node("div", "trace-content");
+        desc.append(node("strong", "", title), node("span", "", detail));
+        row.append(node("span", "trace-time", time), node("span", `trace-dot ${color}`), desc, node("span", "trace-duration", duration));
+        timeline.append(row);
+      }
+      container.append(timeline);
+    }
+
+    function globalIntro(container, title, description) {
+      const intro = node("div", "panel-intro");
+      const text = node("div");
+      text.append(node("h2", "", title), node("p", "", description));
+      intro.append(text, node("span", "demo-tag", "静态示例数据"));
+      container.append(intro);
+    }
+
+    function dataTable(container, title, headers, records, toCells) {
+      const card = node("section", "data-card");
+      const head = node("div", "data-card-head");
+      head.append(node("strong", "", title), node("span", "", `${records.length} 条演示记录`));
+      const scroll = node("div", "table-scroll");
+      const table = node("table", "data-table");
+      const thead = node("thead");
+      const headingRow = node("tr");
+      headers.forEach((label) => headingRow.append(node("th", "", label)));
+      thead.append(headingRow);
+      const tbody = node("tbody");
+      records.forEach((record) => {
+        const row = node("tr");
+        toCells(record).forEach((cell) => {
+          const td = node("td");
+          if (cell instanceof Node) td.append(cell);
+          else td.textContent = cell;
+          row.append(td);
+        });
+        tbody.append(row);
+      });
+      if (!records.length) {
+        const row = node("tr");
+        const td = node("td", "", "没有匹配的演示记录");
+        td.colSpan = headers.length;
+        row.append(td);
+        tbody.append(row);
+      }
+      table.append(thead, tbody);
+      scroll.append(table);
+      card.append(head, scroll);
+      container.append(card);
+    }
+
+    function resultTag(status) {
+      return node("span", `result-tag${status === "错误" ? " error" : ""}`, status);
+    }
+
+    function rowAction(label, callback) {
+      const button = node("button", "table-action", label);
+      button.type = "button";
+      button.addEventListener("click", callback);
+      return button;
+    }
+
+    function filterField(label, control, wide = false) {
+      const field = node("div", `filter-field${wide ? " wide" : ""}`);
+      field.append(node("label", "", label), control);
+      return field;
+    }
+
+    function option(value, text) {
+      const item = node("option", "", text);
+      item.value = value;
+      return item;
+    }
+
+    function renderCallDetail(container, call) {
+      const back = node("button", "detail-back", "← 返回调用列表");
+      back.type = "button";
+      back.addEventListener("click", () => { state.callDetail = null; render(); });
+      container.append(back);
+      globalIntro(container, `调用 ${call.id}`, "这是代理录制的一次模型 API 请求详情。");
+      const card = node("section", "data-card");
+      const head = node("div", "data-card-head");
+      head.append(node("strong", "", "请求概览"), resultTag(call.status));
+      const grid = node("dl", "detail-grid");
+      for (const [label, value] of [["时间", call.time], ["上游", call.upstream], ["模型", call.model], ["耗时", call.duration], ["Token（输入 / 输出）", call.tokens], ["请求路径", call.path]]) {
+        const field = node("div");
+        field.append(node("dt", "", label), node("dd", "", value));
+        grid.append(field);
+      }
+      card.append(head, grid);
+      container.append(card, node("div", "info-panel", "正式接入时，这里继续承载现有的请求体、响应体、Headers、Chunks、Tools 和 Timing 详情；当前 HTML 仅展示页面结构。"));
+    }
+
+    function renderCalls(container) {
+      const detail = sampleCalls.find((call) => call.id === state.callDetail);
+      if (detail) return renderCallDetail(container, detail);
+      globalIntro(container, "调用列表", "跨项目查看所有经过本代理的模型请求；与单个开发对话的“活动”分开。");
+      const filter = node("div", "filter-panel");
+      const date = node("select");
+      date.append(option("all", "全部日期"), option("today", "今天"), option("yesterday", "昨天"));
+      date.value = state.callFilter.date;
+      const status = node("select");
+      status.append(option("all", "全部状态"), option("成功", "成功"), option("错误", "错误"));
+      status.value = state.callFilter.status;
+      const search = node("input");
+      search.type = "search";
+      search.placeholder = "搜索 ID、模型或路径";
+      search.value = state.callFilter.query;
+      const apply = node("button", "filter-button", "筛选");
+      apply.type = "button";
+      const commit = () => {
+        state.callFilter = { date: date.value, status: status.value, query: search.value.trim() };
+        render();
+      };
+      apply.addEventListener("click", commit);
+      search.addEventListener("keydown", (event) => { if (event.key === "Enter") commit(); });
+      filter.append(filterField("日期", date), filterField("状态", status), filterField("关键字", search, true), apply);
+      container.append(filter);
+      const { date: selectedDate, status: selectedStatus, query } = state.callFilter;
+      const filtered = sampleCalls.filter((call) =>
+        (selectedDate === "all" || call.time.startsWith(selectedDate === "today" ? "今天" : "昨天")) &&
+        (selectedStatus === "all" || call.status === selectedStatus) &&
+        (!query || `${call.id} ${call.model} ${call.path}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+      );
+      dataTable(container, "模型 API 调用", ["时间", "模型", "上游", "状态", "耗时", "输入 / 输出 tok", ""], filtered, (call) => [
+        call.time, call.model, call.upstream, resultTag(call.status), call.duration, call.tokens,
+        rowAction("查看详情", () => { state.callDetail = call.id; render(); $("#workScroll").scrollTop = 0; })
+      ]);
+    }
+
+    function renderTrajectoryDetail(container, session) {
+      const back = node("button", "detail-back", "← 返回轨迹列表");
+      back.type = "button";
+      back.addEventListener("click", () => { state.trajectoryDetail = null; render(); });
+      container.append(back);
+      globalIntro(container, session.preview, "代理将同一对话的多次模型调用聚合成会话轨迹。");
+      const timeline = node("div", "trace-list");
+      const events = [
+        ["Turn 1", "用户消息与模型请求", `${session.model} · 输入 1.1k tok`, "调用 1", ""],
+        ["Turn 2", "工具结果与后续回复", "请求 / 响应 / 工具调用可展开检查", "调用 2", "green"],
+        ["Turn 3", "最终答复", `${session.calls} 次调用 · 最近 ${session.latest}`, "完成", "green"]
+      ];
+      for (const [time, title, description, duration, color] of events) {
+        const row = node("div", "trace-row");
+        const detail = node("div", "trace-content");
+        detail.append(node("strong", "", title), node("span", "", description));
+        row.append(node("span", "trace-time", time), node("span", `trace-dot ${color}`), detail, node("span", "trace-duration", duration));
+        timeline.append(row);
+      }
+      container.append(timeline, node("div", "info-panel", "正式接入时沿用现有轨迹页的 Turn 分组、搜索、Inspector 和时间轴；这里展示导航与信息层级。"));
+    }
+
+    function renderTrajectoryList(container) {
+      const detail = sampleTrajectories.find((session) => session.id === state.trajectoryDetail);
+      if (detail) return renderTrajectoryDetail(container, detail);
+      globalIntro(container, "轨迹", "跨项目查看代理录制的会话轨迹，按模型请求关联和聚合。");
+      const filter = node("div", "filter-panel");
+      const search = node("input");
+      search.type = "search";
+      search.placeholder = "搜索会话内容或模型";
+      search.value = state.trajectoryQuery;
+      const apply = node("button", "filter-button", "搜索");
+      apply.type = "button";
+      const commit = () => { state.trajectoryQuery = search.value.trim(); render(); };
+      apply.addEventListener("click", commit);
+      search.addEventListener("keydown", (event) => { if (event.key === "Enter") commit(); });
+      filter.append(filterField("关键字", search, true), apply);
+      container.append(filter);
+      const filtered = sampleTrajectories.filter((session) => !state.trajectoryQuery || `${session.preview} ${session.model}`.toLocaleLowerCase().includes(state.trajectoryQuery.toLocaleLowerCase()));
+      dataTable(container, "录制会话", ["首条消息", "模型", "轮数", "输入 tok", "输出 tok", "最后活动", "状态", ""], filtered, (session) => [
+        session.preview, session.model, String(session.calls), session.input, session.output, session.latest, resultTag(session.status),
+        rowAction("查看轨迹", () => { state.trajectoryDetail = session.id; render(); $("#workScroll").scrollTop = 0; })
+      ]);
+    }
+
+    function renderDashboard(container) {
+      globalIntro(container, "仪表盘", "代理调用概览与最近活动。");
+      const cards = node("div", "global-cards");
+      for (const [value, label, className] of [["128", "今日调用", ""], ["96.9%", "成功率", "add"], ["2.8 s", "平均耗时", ""]]) {
+        const card = node("div", `metric ${className}`);
+        card.append(node("strong", "", value), node("span", "", label));
+        cards.append(card);
+      }
+      container.append(cards);
+      dataTable(container, "最近调用", ["时间", "模型", "上游", "状态", "耗时", ""], sampleCalls.slice(0, 3), (call) => [
+        call.time, call.model, call.upstream, resultTag(call.status), call.duration,
+        rowAction("查看", () => { state.section = "calls"; state.callDetail = call.id; render(); })
+      ]);
+    }
+
+    function renderSettings(container) {
+      globalIntro(container, "设置", "延续现有应用的代理、记录和 OpenCode 配置入口。");
+      const card = node("section", "data-card");
+      const head = node("div", "data-card-head");
+      head.append(node("strong", "", "配置分区"), node("span", "", "布局示意，未连接配置文件"));
+      card.append(head);
+      for (const [title, hint, value] of [
+        ["代理与上游", "地址、凭据策略、超时与路由", "3 个上游"],
+        ["调用记录", "脱敏、保留天数与清理", "本地存储"],
+        ["OpenCode", "程序来源、模型和全局配置", "按项目运行"]
+      ]) {
+        const row = node("div", "setting-row");
+        const label = node("div");
+        label.append(node("strong", "", title), node("small", "", hint));
+        row.append(label, node("span", "", value));
+        card.append(row);
+      }
+      container.append(card);
+    }
+
+    function render() {
+      renderSidebar();
+      renderHeader();
+      const container = $("#workContent");
+      container.replaceChildren();
+      if (state.section === "workspace") {
+        if (state.tab === "chat") renderChat(container);
+        if (state.tab === "changes") renderChanges(container);
+        if (state.tab === "trace") renderTrace(container);
+      }
+      if (state.section === "calls") renderCalls(container);
+      if (state.section === "trajectory") renderTrajectoryList(container);
+      if (state.section === "dashboard") renderDashboard(container);
+      if (state.section === "settings") renderSettings(container);
+    }
+
+    function selectConversation(id) {
+      state.selectedId = id;
+      state.section = "workspace";
+      state.tab = "chat";
+      state.query = "";
+      $("#search").value = "";
+      $("#app").classList.remove("sidebar-open");
+      render();
+      $("#workScroll").scrollTop = 0;
+    }
+
+    function setTab(tab) {
+      state.section = "workspace";
+      state.tab = tab;
+      render();
+      $("#workScroll").scrollTop = 0;
+    }
+
+    function setSection(section) {
+      state.section = section;
+      if (section === "calls") state.callDetail = null;
+      if (section === "trajectory") state.trajectoryDetail = null;
+      $("#app").classList.remove("sidebar-open");
+      render();
+      $("#workScroll").scrollTop = 0;
+    }
+
+    function resolvePermission(choice) {
+      state.permission = choice;
+      render();
+      showToast(choice === "allowed" ? "已更新演示权限状态，未执行命令" : "已拒绝演示权限请求");
+    }
+
+    let toastTimer;
+    function showToast(message) {
+      const toast = $("#toast");
+      toast.textContent = message;
+      toast.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("show"), 2800);
+    }
+
+    $("#search").addEventListener("input", (event) => {
+      state.query = event.target.value;
+      renderSidebar();
+    });
+    $("#newConversation").addEventListener("click", () => {
+      const { project } = current();
+      const id = `draft-${Date.now()}`;
+      project.conversations.unshift({ id, title: "新对话", preview: "尚未发送消息", time: "现在", prompt: "" });
+      project.open = true;
+      selectConversation(id);
+      $("#prompt").focus();
+    });
+    document.querySelectorAll(".global-link").forEach((button) => button.addEventListener("click", () => setSection(button.dataset.section)));
+    document.querySelectorAll(".tab").forEach((button) => button.addEventListener("click", () => setTab(button.dataset.tab)));
+    $("#moreButton").addEventListener("click", () => showToast("这是独立 HTML 原型，所有数据仅用于演示"));
+    $("#sidebarClose").addEventListener("click", () => {
+      $("#app").classList.remove("sidebar-open");
+    });
+    $("#mobileMenu").addEventListener("click", () => $("#app").classList.add("sidebar-open"));
+    $("#mobileScrim").addEventListener("click", () => $("#app").classList.remove("sidebar-open"));
+
+    $("#composer").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const input = $("#prompt");
+      const value = input.value.trim();
+      if (!value) return;
+      const { conversation } = current();
+      if (conversation.title === "新对话") conversation.title = value.length > 22 ? `${value.slice(0, 22)}…` : value;
+      conversation.preview = "离线演示回复";
+      conversation.time = "刚刚";
+      const messages = state.extraMessages.get(conversation.id) || [];
+      messages.push(value);
+      state.extraMessages.set(conversation.id, messages);
+      input.value = "";
+      input.style.height = "";
+      state.section = "workspace";
+      state.tab = "chat";
+      render();
+      $("#workScroll").scrollTop = $("#workScroll").scrollHeight;
+    });
+    $("#prompt").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        $("#composer").requestSubmit();
+      }
+    });
+    $("#prompt").addEventListener("input", (event) => {
+      event.target.style.height = "auto";
+      event.target.style.height = `${Math.min(event.target.scrollHeight, 165)}px`;
+    });
+    document.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        $("#search").focus();
+        $("#app").classList.add("sidebar-open");
+      }
+      if (event.key === "Escape") $("#app").classList.remove("sidebar-open");
+    });
+
+    render();
+  </script>
+</body>
+</html>

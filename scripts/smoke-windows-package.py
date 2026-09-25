@@ -38,7 +38,9 @@ def _desktop_subsystem(path: Path) -> int:
     return struct.unpack_from("<H", optional_header, 68)[0]
 
 
-def _request_json(base_url: str, method: str, path: str, body: dict | None = None) -> dict:
+def _request_json(
+    base_url: str, method: str, path: str, body: dict | None = None, *, timeout: float = 5
+) -> dict | list:
     data = json.dumps(body).encode("utf-8") if body is not None else None
     request = urllib.request.Request(
         f"{base_url}{path}",
@@ -46,7 +48,7 @@ def _request_json(base_url: str, method: str, path: str, body: dict | None = Non
         method=method,
         headers={"Content-Type": "application/json"} if data is not None else {},
     )
-    with urllib.request.urlopen(request, timeout=5) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.load(response)
 
 
@@ -158,6 +160,30 @@ def main() -> None:
                 check = _request_json(base_url, "GET", "/__recorder/api/terminal/check")
                 if check.get("opencode_source") != "bundled" or not check.get("opencode_version"):
                     raise RuntimeError(f"bundled OpenCode check failed: {check}")
+                workspace_dir = temp / "workspace-project"
+                workspace_dir.mkdir()
+                workspace_prefix = "/__recorder/api/workspace"
+                workspace_check = _request_json(base_url, "GET", f"{workspace_prefix}/check")
+                if not workspace_check.get("found") or workspace_check.get("source") != "bundled":
+                    raise RuntimeError(f"bundled workspace check failed: {workspace_check}")
+                project = _request_json(
+                    base_url, "POST", f"{workspace_prefix}/projects",
+                    {"path": str(workspace_dir)},
+                )
+                project_path = f"{workspace_prefix}/projects/{project['id']}"
+                conversation = _request_json(
+                    base_url, "POST", f"{project_path}/sessions", {}, timeout=30,
+                )
+                sessions = _request_json(base_url, "GET", f"{project_path}/sessions", timeout=30)
+                if conversation["id"] not in {item["id"] for item in sessions["items"]}:
+                    raise RuntimeError("packaged OpenCode did not retain the workspace conversation")
+                messages = _request_json(
+                    base_url, "GET", f"{project_path}/sessions/{conversation['id']}/messages",
+                    timeout=30,
+                )
+                if not isinstance(messages, list):
+                    raise RuntimeError(f"unexpected workspace messages response: {messages}")
+                _request_json(base_url, "DELETE", project_path, timeout=30)
                 session = _request_json(
                     base_url,
                     "POST",
@@ -188,7 +214,7 @@ def main() -> None:
                 except subprocess.TimeoutExpired:
                     process.kill()
 
-    print("Windows GUI subsystem and packaged ConPTY input smoke test passed")
+    print("Windows GUI, packaged OpenCode workspace, and ConPTY input smoke tests passed")
 
 
 if __name__ == "__main__":

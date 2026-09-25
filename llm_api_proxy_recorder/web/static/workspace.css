@@ -1,0 +1,110 @@
+/* 桌面工作区：项目 → 对话 → 消息与改动。 */
+.workspace-route .view {
+  max-width: none; height: calc(100vh - 54px); min-height: 520px;
+  margin: 0; padding: 0; overflow: hidden;
+}
+.wsp { height: 100%; min-width: 0; display: grid; grid-template-columns: 290px minmax(0, 1fr); background: #fff; }
+.wsp button { font-family: var(--sans); }
+.wsp-side { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #f8f9fb; }
+.wsp-side-top { padding: 16px 14px 14px; border-bottom: 1px solid var(--border); }
+.wsp-side-title { display: flex; align-items: center; justify-content: space-between; margin: 0 2px 12px; font-size: 13px; font-weight: 700; }
+.wsp-side-actions { display: flex; gap: 6px; }
+.wsp-new { height: 37px; flex: 1; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; }
+.wsp-new:hover { background: #296cde; }
+.wsp-add { height: 37px; width: 37px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--accent); font-size: 20px; line-height: 1; }
+.wsp-add:hover { background: var(--accent-soft); }
+.wsp-search { width: 100%; height: 34px; margin-top: 11px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: #fff; color: var(--text); font-size: 11px; }
+.wsp-side-list { flex: 1; overflow-y: auto; padding: 15px 9px 20px; }
+.wsp-side-label { display: flex; justify-content: space-between; margin: 0 9px 9px; color: var(--text-faint); font-size: 10px; font-weight: 700; letter-spacing: .06em; }
+.wsp-project { margin-bottom: 10px; }
+.wsp-project-head { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 35px; padding: 4px 7px; border: 0; border-radius: 7px; background: transparent; color: var(--text); text-align: left; font-size: 12px; font-weight: 700; }
+.wsp-project-head:hover { background: #eef1f7; }
+.wsp-project-mark { flex: none; width: 25px; height: 25px; display: grid; place-items: center; border-radius: 7px; background: #e8efff; color: #426ac2; font-size: 10px; }
+.wsp-project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wsp-project-count { color: var(--text-faint); font: 10px var(--mono); }
+.wsp-project-chevron { color: var(--text-faint); font-size: 11px; }
+.wsp-threads { margin-left: 18px; padding-left: 9px; border-left: 1px solid #dce3ec; }
+.wsp-thread { width: 100%; display: block; padding: 8px 9px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--text-dim); text-align: left; }
+.wsp-thread:hover { background: #edf1f7; }
+.wsp-thread.active { border-color: #d9e5fb; background: #eaf1ff; color: #2459b7; }
+.wsp-thread-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; font-weight: 650; }
+.wsp-thread-time { display: block; margin-top: 1px; color: var(--text-faint); font-size: 10px; }
+.wsp-side-bottom { padding: 10px 15px 13px; border-top: 1px solid var(--border); color: var(--text-faint); font-size: 10.5px; }
+.wsp-side-bottom strong { color: var(--text-dim); font-weight: 650; }
+.wsp-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.wsp-head { min-height: 73px; padding: 13px 27px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
+.wsp-head-text { flex: 1; min-width: 0; }
+.wsp-breadcrumb { color: var(--text-faint); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wsp-title { margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 730; }
+.wsp-status { flex: none; padding: 4px 9px; border-radius: 99px; background: #f1f4f8; color: var(--text-dim); font-size: 10px; font-weight: 650; }
+.wsp-status.busy { background: #eaf1ff; color: var(--accent); }
+.wsp-status.attention { background: #fff5e4; color: #a66817; }
+.wsp-abort { flex: none; padding: 5px 9px; border: 1px solid #e8c9c6; border-radius: 7px; background: #fff5f4; color: var(--red); font-size: 10.5px; font-weight: 700; }
+.wsp-abort:hover { background: #ffe9e7; }
+.wsp-tabs { height: 43px; display: flex; gap: 22px; padding: 0 27px; border-bottom: 1px solid var(--border); }
+.wsp-tab { height: 43px; padding: 0 2px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--text-dim); font-size: 11.5px; font-weight: 700; }
+.wsp-tab:hover { color: var(--text); }
+.wsp-tab.active { border-bottom-color: var(--accent); color: var(--accent); }
+.wsp-scroll { flex: 1; min-height: 0; overflow-y: auto; background: linear-gradient(#fff, #fcfdff); }
+.wsp-content { width: min(860px, calc(100% - 56px)); min-height: 100%; margin: auto; padding: 30px 0 35px; }
+.wsp-empty { min-height: 300px; display: grid; align-content: center; justify-items: center; text-align: center; color: var(--text-dim); }
+.wsp-empty-icon { width: 52px; height: 52px; display: grid; place-items: center; border-radius: 15px; background: var(--accent-soft); color: var(--accent); font-size: 24px; }
+.wsp-empty h2 { margin: 13px 0 4px; color: var(--text); font-size: 16px; }
+.wsp-empty p { max-width: 350px; margin: 0; font-size: 11.5px; }
+.wsp-error { margin: 14px 0; padding: 10px 12px; border: 1px solid #f3d9d7; border-radius: 8px; background: #fff5f4; color: var(--red); font-size: 11.5px; }
+.wsp-message { display: flex; gap: 11px; margin: 0 0 23px; }
+.wsp-message.user { justify-content: flex-end; }
+.wsp-message.user .wsp-message-inner { max-width: min(670px, 92%); padding: 12px 15px; border: 1px solid #e1eafa; border-radius: 13px 13px 4px 13px; background: #eef3fc; }
+.wsp-message.assistant .wsp-message-inner { flex: 1; min-width: 0; }
+.wsp-avatar { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 15px; }
+.wsp-message-meta { min-height: 27px; color: var(--text-faint); font-size: 10px; }
+.wsp-message-meta strong { margin-right: 6px; color: var(--text); font-size: 11.5px; }
+.wsp-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.72; font-size: 12.5px; }
+.wsp-part { margin: 8px 0; }
+.wsp-tool, .wsp-permission, .wsp-diff-file { overflow: hidden; margin: 11px 0; border: 1px solid var(--border); border-radius: 9px; background: #fff; }
+.wsp-tool-head, .wsp-diff-head { padding: 9px 12px; border-bottom: 1px solid var(--border); background: #fbfcfe; color: var(--text); font-size: 11px; font-weight: 700; }
+.wsp-tool-body { padding: 10px 12px; color: var(--text-dim); font: 10.5px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow-y: auto; }
+.wsp-reasoning { margin: 7px 0; padding: 9px 11px; border-left: 2px solid #c5d4ec; color: var(--text-dim); font-size: 11px; white-space: pre-wrap; }
+.wsp-permission { padding: 12px 14px; border-color: #f0dbb5; background: #fffbf3; }
+.wsp-permission strong { font-size: 11.5px; }
+.wsp-permission p { margin: 5px 0 10px; color: #78694e; font-size: 11px; overflow-wrap: anywhere; }
+.wsp-permission-actions { display: flex; gap: 7px; }
+.wsp-mini { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--text-dim); font-size: 10.5px; font-weight: 700; }
+.wsp-mini.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+.wsp-section-title { margin: 0 0 5px; font-size: 16px; }
+.wsp-section-note { margin: 0 0 17px; color: var(--text-dim); font-size: 11px; }
+.wsp-diff-head { display: flex; gap: 12px; justify-content: space-between; }
+.wsp-diff-head span:last-child { color: var(--green); font: 10px var(--mono); }
+.wsp-diff-content { padding: 11px 12px; overflow-x: auto; color: var(--text-dim); font: 10.5px/1.6 var(--mono); white-space: pre-wrap; }
+.wsp-composer-dock { padding: 13px 27px 17px; border-top: 1px solid var(--border); background: #fff; }
+.wsp-composer { max-width: 860px; margin: auto; border: 1px solid var(--border); border-radius: 11px; background: #fff; box-shadow: 0 5px 22px rgba(42, 60, 88, .06); }
+.wsp-composer:focus-within { border-color: #abc2f7; }
+.wsp-input { width: 100%; min-height: 65px; max-height: 160px; padding: 12px 14px 0; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--text); font: 12px/1.5 var(--sans); }
+.wsp-composer-bottom { display: flex; align-items: center; gap: 10px; padding: 5px 8px 8px 12px; }
+.wsp-model { max-width: min(300px, 56vw); padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px; background: #fafbfd; color: var(--text-dim); font-size: 10px; }
+.wsp-composer-hint { color: var(--text-faint); font-size: 10px; }
+.wsp-composer-spacer { flex: 1; }
+.wsp-send { height: 31px; min-width: 31px; padding: 0 9px; border: 0; border-radius: 7px; background: var(--accent); color: #fff; font-size: 13px; }
+.wsp-send:hover { background: #296cde; }
+.wsp-composer-note { max-width: 860px; margin: 5px auto 0; text-align: center; color: var(--text-faint); font-size: 9.5px; }
+.wsp-modal-mask { position: fixed; inset: 0; z-index: 100; display: grid; place-items: start center; padding-top: 14vh; background: rgba(24, 35, 51, .42); }
+.wsp-modal { width: min(530px, calc(100vw - 28px)); padding: 18px; border-radius: 12px; background: #fff; box-shadow: 0 16px 45px rgba(25, 38, 56, .23); }
+.wsp-modal h2 { margin: 0 0 12px; font-size: 16px; }
+.wsp-modal p { margin: 0 0 13px; color: var(--text-dim); font-size: 11.5px; }
+.wsp-modal-row { display: flex; gap: 7px; }
+.wsp-modal-row input { flex: 1; min-width: 0; padding: 8px 9px; border: 1px solid var(--border); border-radius: 7px; font-size: 11.5px; }
+.wsp-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 15px; }
+@media (max-width: 800px) {
+  .wsp { grid-template-columns: 235px minmax(0, 1fr); }
+  .wsp-content { width: calc(100% - 32px); }
+  .wsp-head, .wsp-composer-dock { padding-inline: 15px; }
+  .wsp-tabs { padding-inline: 15px; }
+}
+@media (max-width: 600px) {
+  .wsp { grid-template-columns: 1fr; }
+  .wsp-side { position: fixed; top: 54px; bottom: 0; left: 0; z-index: 35; width: min(285px, 83vw); transform: translateX(-101%); transition: transform .18s; box-shadow: 8px 0 30px rgba(22, 39, 62, .1); }
+  .wsp.show-side .wsp-side { transform: translateX(0); }
+  .wsp-menu { display: inline-block !important; }
+  .wsp-composer-hint { display: none; }
+}
+.wsp-menu { display: none; flex: none; width: 29px; height: 29px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--text-dim); }
