@@ -8,9 +8,9 @@ import hashlib
 import os
 import re
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -239,6 +239,36 @@ async def project_commands(project_id: str, request: Request):
     return await _opencode(request, path, "GET", "/command")
 
 
+@router.get("/workspace/projects/{project_id}/files")
+async def search_project_files(
+    project_id: str, request: Request, query: str = Query(default="", max_length=200),
+):
+    root = Path(_project_path(request, project_id)).resolve()
+    endpoint = "/find/file?" + urlencode({"query": query, "type": "file", "limit": 30})
+    matches = await _opencode(request, str(root), "GET", endpoint)
+    if not isinstance(matches, list):
+        return {"items": []}
+
+    items = []
+    for match in matches:
+        if not isinstance(match, str) or not match or "\x00" in match:
+            continue
+        normalized = match.replace("\\", "/")
+        segments = normalized.split("/")
+        if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized) or any(
+            part in {"", ".", ".."} for part in segments
+        ):
+            continue
+        try:
+            candidate = root.joinpath(*segments).resolve(strict=True)
+            candidate.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        if candidate.is_file():
+            items.append("/".join(segments))
+    return {"items": list(dict.fromkeys(items))}
+
+
 @router.get("/workspace/projects/{project_id}/sessions/{session_id}/messages")
 async def list_messages(project_id: str, session_id: str, request: Request):
     path = _project_path(request, project_id)
@@ -248,6 +278,7 @@ async def list_messages(project_id: str, session_id: str, request: Request):
 class PromptBody(BaseModel):
     text: str = Field(default="", max_length=100_000)
     files: list["PromptFile"] = Field(default_factory=list, max_length=8)
+    references: list["PromptReference"] = Field(default_factory=list, max_length=8)
     provider_id: str | None = None
     model_id: str | None = None
     agent: str | None = None
@@ -258,6 +289,10 @@ class PromptFile(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     mime: str = Field(min_length=1, max_length=100)
     url: str = Field(min_length=1, max_length=14_000_000)
+
+
+class PromptReference(BaseModel):
+    path: str = Field(min_length=1, max_length=1_000)
 
 
 def _prompt_file_part(file: PromptFile) -> tuple[dict, int]:
@@ -288,13 +323,38 @@ def _model_choice(provider_id: str | None, model_id: str | None) -> dict | None:
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/prompt")
 async def send_prompt(project_id: str, session_id: str, body: PromptBody, request: Request):
     path = _project_path(request, project_id)
-    if not body.text.strip() and not body.files:
+    if len(body.files) + len(body.references) > 8:
+        raise HTTPException(status_code=400, detail="一条消息最多添加 8 个附件或文件引用")
+    if not body.text.strip() and not body.files and not body.references:
         raise HTTPException(status_code=400, detail="请输入消息或添加附件")
     parts = [{"type": "text", "text": body.text}] if body.text.strip() else []
     file_parts = [_prompt_file_part(file) for file in body.files]
     if sum(size for _, size in file_parts) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="附件总大小不能超过 20 MB")
     parts.extend(part for part, _ in file_parts)
+    project_root = Path(path).resolve()
+    references = set()
+    for reference in body.references:
+        if "\\" in reference.path or "\x00" in reference.path or re.match(r"^[A-Za-z]:", reference.path):
+            raise HTTPException(status_code=400, detail="无效的项目文件路径")
+        relative = Path(reference.path)
+        if relative.is_absolute() or any(part in {".", ".."} for part in relative.parts):
+            raise HTTPException(status_code=400, detail="无效的项目文件路径")
+        try:
+            candidate = (project_root / relative).resolve(strict=True)
+            candidate.relative_to(project_root)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="文件不存在或不在当前项目内") from exc
+        if not candidate.is_file():
+            raise HTTPException(status_code=400, detail="引用路径不是文件")
+        relative_name = candidate.relative_to(project_root).as_posix()
+        if relative_name in references:
+            continue
+        references.add(relative_name)
+        parts.append({
+            "type": "file", "filename": relative_name, "mime": "text/plain",
+            "url": candidate.as_uri(),
+        })
     prompt: dict = {"parts": parts}
     model = _model_choice(body.provider_id, body.model_id)
     if model:

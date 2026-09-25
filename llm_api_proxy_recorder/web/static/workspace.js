@@ -11,6 +11,11 @@ function renderWorkspace(view) {
   let refreshing = false;
   let refreshRequested = false;
   let composingInput = false;
+  let autocompleteKind = null;
+  let fileSearchTimer = null;
+  let fileSearchRequest = 0;
+  let fileMatches = [];
+  let fileMentionRange = null;
   let lastSessionListRefresh = 0;
   const state = {
     projects: [], sessions: new Map(), sessionDetails: new Map(), errors: new Map(),
@@ -20,7 +25,7 @@ function renderWorkspace(view) {
     check: null, tab: "chat", search: "", sending: false, chosenModels: new Map(),
     chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], modelLoadError: "",
     collapsedProjects: new Set(), expandedTools: new Map(), pendingAction: "", actionError: "", compactingSessionId: null,
-    attachments: [], pendingImageCount: 0, pendingImageBytes: 0, commandSelectedIndex: 0,
+    attachments: [], fileReferences: [], pendingImageCount: 0, pendingImageBytes: 0, commandSelectedIndex: 0,
   };
 
   view.innerHTML = `
@@ -40,7 +45,7 @@ function renderWorkspace(view) {
         <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" fill="currentColor"/></svg></button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span><div class="wsp-session-actions"><button class="wsp-more" id="wsp-more" type="button" aria-label="对话操作" aria-haspopup="menu" aria-expanded="false" hidden>···</button><div class="wsp-action-menu" id="wsp-action-menu" role="menu" hidden></div></div></header>
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
-        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="OpenCode 命令" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送图片" hidden></div><textarea class="wsp-input" id="wsp-input" placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" rows="2"></textarea><input id="wsp-image-picker" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="添加图片，也可直接粘贴截图" aria-label="添加图片"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div><div class="wsp-composer-note">输入 / 查看命令 · 输入 ! 运行命令 · 请核对权限请求</div></div>
+        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><textarea class="wsp-input" id="wsp-input" placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" rows="2"></textarea><input id="wsp-image-picker" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="添加图片，也可直接粘贴截图" aria-label="添加图片"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
       </div>
     </section>`;
 
@@ -74,6 +79,7 @@ function renderWorkspace(view) {
     disposed = true;
     if (events) events.close();
     if (refreshTimer) clearTimeout(refreshTimer);
+    if (fileSearchTimer) clearTimeout(fileSearchTimer);
     clearInterval(poll);
   });
 
@@ -116,12 +122,18 @@ function renderWorkspace(view) {
   }
 
   function statusIcon(kind) {
-    const path = kind === "busy" ? "M10 2a8 8 0 1 1-8 8" :
-      kind === "ready" ? "m4 10 4 4 8-8" :
-      kind === "attention" ? "M10 5v6m0 4h.01" :
-      kind === "error" ? "M5 5l10 10M15 5 5 15" : "M10 5v5m0 4h.01";
-    return el("svg", { class: `wsp-status-icon ${kind === "busy" ? "spinning" : ""}`,
-      viewBox: "0 0 20 20", "aria-hidden": "true" }, el("path", { d: path }));
+    const icon = el("svg", { class: "wsp-status-icon", viewBox: "0 0 20 20", "aria-hidden": "true" },
+      el("circle", { class: "wsp-status-track", cx: "10", cy: "10", r: "7.25" }));
+    if (kind === "busy") {
+      icon.append(el("g", { class: "wsp-status-spinner" },
+        el("circle", { cx: "10", cy: "10", r: "7.25", "stroke-dasharray": "12 34" })));
+    } else {
+      const path = kind === "ready" ? "m6.2 10.2 2.5 2.5 5.2-5.4" :
+        kind === "attention" ? "M10 6.2v4.1m0 3.5h.01" :
+        kind === "error" ? "m7 7 6 6m0-6-6 6" : "M10 7v3.3m0 3h.01";
+      icon.append(el("path", { class: "wsp-status-mark", d: path }));
+    }
+    return icon;
   }
   function messageDay(message) {
     const date = new Date(message?.info?.time?.created || message?.info?.time?.updated || Date.now());
@@ -199,6 +211,7 @@ function renderWorkspace(view) {
       }
     }
     const groups = [];
+    let contextGroup = null;
     if (contextSample) {
       const { info, usage, promptTokens } = contextSample;
       const choice = selectedModel();
@@ -208,8 +221,8 @@ function renderWorkspace(view) {
       const used = promptTokens + numeric(usage.output) + numeric(usage.reasoning);
       if (contextWindow > 0) {
         const percent = Math.min(100, Math.round(used / contextWindow * 100));
-        groups.push(el("span", { class: "wsp-stat-context", title: "按最近一次模型请求的 Token 用量和模型上下文上限估算",
-          text: `上下文 ${formatTokens(used)} / ${formatTokens(contextWindow)} · ${percent}%` }));
+        contextGroup = el("span", { class: "wsp-stat-context", title: "按最近一次模型请求的 Token 用量和模型上下文上限估算",
+          text: `上下文 ${formatTokens(used)} / ${formatTokens(contextWindow)} · ${percent}%` });
       }
     }
     if (turns.size) groups.push(el("span", { text: `${turns.size} 轮` }));
@@ -221,9 +234,11 @@ function renderWorkspace(view) {
       groups.push(el("span", { title: "输出 Token 数除以模型请求总用时，包含首 Token 等待", text: `速度 ${speedText} tok/s` }));
     }
     if (toolMilliseconds > 0) groups.push(el("span", { text: `工具 ${formatDuration(toolMilliseconds)}` }));
-    statsLine.replaceChildren(...groups.flatMap((group, index) => index ? [document.createTextNode(" · "), group] : [group]));
-    statsLine.hidden = groups.length === 0;
-    statsLine.title = groups.map((group) => group.textContent).join(" · ");
+    const left = el("div", { class: "wsp-stats-left" });
+    left.replaceChildren(...groups.flatMap((group, index) => index ? [document.createTextNode(" · "), group] : [group]));
+    statsLine.replaceChildren(left, ...(contextGroup ? [contextGroup] : []));
+    statsLine.hidden = groups.length === 0 && !contextGroup;
+    statsLine.title = [...groups, ...(contextGroup ? [contextGroup] : [])].map((group) => group.textContent).join(" · ");
   }
 
   function renderAttachments() {
@@ -239,7 +254,17 @@ function renderWorkspace(view) {
           } }));
       attachmentList.append(preview);
     }
-    attachmentList.hidden = state.attachments.length === 0;
+    for (const reference of state.fileReferences) {
+      attachmentList.append(el("div", { class: "wsp-attachment-file", title: reference.path },
+        el("span", { class: "wsp-attachment-icon", "aria-hidden": "true", text: "▤" }),
+        el("span", { text: reference.path }),
+        el("button", { type: "button", title: `移除 ${reference.path}`, "aria-label": `移除 ${reference.path}`,
+          text: "×", onclick: () => {
+            state.fileReferences = state.fileReferences.filter((item) => item.id !== reference.id);
+            renderAttachments();
+          } })));
+    }
+    attachmentList.hidden = state.attachments.length === 0 && state.fileReferences.length === 0;
   }
 
   function readImage(file) {
@@ -262,7 +287,7 @@ function renderWorkspace(view) {
       if (!acceptedTypes.has(file.type)) { toast("只支持 PNG、JPEG、GIF 或 WebP 图片", "error"); continue; }
       if (file.size > 8 * 1024 * 1024) { toast(`${file.name || "图片"} 超过 8 MB`, "error"); continue; }
       const totalBytes = state.attachments.reduce((sum, item) => sum + item.size, 0) + state.pendingImageBytes;
-      if (state.attachments.length + state.pendingImageCount >= 8) { toast("一条消息最多添加 8 张图片", "error"); break; }
+      if (state.attachments.length + state.fileReferences.length + state.pendingImageCount >= 8) { toast("一条消息最多添加 8 个附件或文件引用", "error"); break; }
       if (totalBytes + file.size > 20 * 1024 * 1024) { toast("图片总大小不能超过 20 MB", "error"); continue; }
       state.pendingImageCount += 1;
       state.pendingImageBytes += file.size;
@@ -454,7 +479,10 @@ function renderWorkspace(view) {
     label.className = `wsp-status ${kind}`;
     label.setAttribute("aria-label", description);
     label.title = description;
-    label.replaceChildren(statusIcon(kind));
+    if (label.dataset.kind !== kind) {
+      label.replaceChildren(statusIcon(kind));
+      label.dataset.kind = kind;
+    }
     view.querySelector("#wsp-abort").hidden = !session || !busy;
     moreButton.hidden = !session;
     if (!session) closeActionMenu();
@@ -1064,7 +1092,7 @@ function renderWorkspace(view) {
 
   function openAgentPicker() {
     closeModelPicker();
-    commandMenu.hidden = true;
+    hideAutocomplete();
     agentPicker.hidden = false;
     agentTrigger.setAttribute("aria-expanded", "true");
     renderAgentPicker();
@@ -1158,7 +1186,7 @@ function renderWorkspace(view) {
   function openModelPicker() {
     if (!state.projectId) return;
     closeAgentPicker();
-    commandMenu.hidden = true;
+    hideAutocomplete();
     modelPicker.hidden = false;
     modelButton.setAttribute("aria-expanded", "true");
     modelSearch.value = "";
@@ -1214,7 +1242,7 @@ function renderWorkspace(view) {
       const data = await api(`workspace/projects/${encodeURIComponent(projectId)}/commands`, { silent: true });
       if (alive() && state.projectId === projectId) {
         state.commands = Array.isArray(data) ? data : [];
-        if (!commandMenu.hidden) renderCommandMenu();
+        if (!commandMenu.hidden && autocompleteKind === "commands") renderCommandMenu();
       }
     } catch (_) { state.commands = []; }
   }
@@ -1228,12 +1256,103 @@ function renderWorkspace(view) {
     { name: "settings", description: "打开设置" },
   ];
 
-  function renderCommandMenu() {
-    const draft = input.value.trimStart();
-    if (!draft.startsWith("/") || draft.includes("\n") || draft.includes(" ")) {
-      commandMenu.hidden = true;
+  function hideAutocomplete() {
+    commandMenu.hidden = true;
+    autocompleteKind = null;
+    fileMentionRange = null;
+    fileSearchRequest++;
+    if (fileSearchTimer) clearTimeout(fileSearchTimer);
+  }
+
+  function currentFileMention() {
+    const cursor = input.selectionStart ?? input.value.length;
+    const before = input.value.slice(0, cursor);
+    const match = /(^|[\s([{\"'])@([^\s@]*)$/u.exec(before);
+    if (!match) return null;
+    return { query: match[2], start: cursor - match[2].length - 1, end: cursor };
+  }
+
+  function drawFileMenu(message) {
+    commandMenu.replaceChildren(el("div", { class: "wsp-command-heading", text: "项目文件 · ↑ ↓ 选择 · Enter 引用" }));
+    if (message) {
+      commandMenu.append(el("div", { class: "wsp-file-state", text: message }));
+      commandMenu.hidden = false;
       return;
     }
+    for (const [index, path] of fileMatches.entries()) {
+      commandMenu.append(el("button", { type: "button", role: "option", "aria-selected": String(index === state.commandSelectedIndex),
+        class: `wsp-command-option wsp-file-option${index === state.commandSelectedIndex ? " selected" : ""}`,
+        onclick: () => selectFileReference(path),
+        onmouseenter: () => { state.commandSelectedIndex = index; updateCommandSelection(); } },
+      el("strong", { text: path }), el("span", { text: "文件" })));
+    }
+    if (!fileMatches.length) commandMenu.append(el("div", { class: "wsp-file-state", text: "没有找到匹配的项目文件" }));
+    commandMenu.hidden = false;
+  }
+
+  function renderFileMenu(mention) {
+    autocompleteKind = "files";
+    fileMentionRange = mention;
+    state.commandSelectedIndex = 0;
+    fileMatches = [];
+    drawFileMenu("正在搜索项目文件…");
+    if (fileSearchTimer) clearTimeout(fileSearchTimer);
+    const requestID = ++fileSearchRequest;
+    const projectId = state.projectId;
+    if (!projectId) { drawFileMenu("请先选择项目"); return; }
+    if (!mention.query) { drawFileMenu("继续输入文件名以搜索项目文件"); return; }
+    fileSearchTimer = setTimeout(async () => {
+      try {
+        const data = await api(`workspace/projects/${encodeURIComponent(projectId)}/files?query=${encodeURIComponent(mention.query)}`, { silent: true });
+        const current = currentFileMention();
+        if (!alive() || state.projectId !== projectId || autocompleteKind !== "files" ||
+            requestID !== fileSearchRequest || current?.start !== mention.start || current?.query !== mention.query) return;
+        fileMatches = Array.isArray(data.items) ? data.items.filter((item) => typeof item === "string") : [];
+        state.commandSelectedIndex = 0;
+        drawFileMenu();
+      } catch (error) {
+        if (requestID !== fileSearchRequest || autocompleteKind !== "files") return;
+        drawFileMenu(`文件搜索失败：${detail(error)}`);
+      }
+    }, 120);
+  }
+
+  function selectFileReference(path) {
+    if (state.attachments.length + state.fileReferences.length >= 8 &&
+        !state.fileReferences.some((item) => item.path === path)) {
+      toast("一条消息最多添加 8 个附件或文件引用", "error");
+      hideAutocomplete();
+      return;
+    }
+    const mention = fileMentionRange || currentFileMention();
+    if (mention) {
+      const suffix = input.value.slice(mention.end);
+      const replacement = `@${path}${suffix && /^\s/.test(suffix) ? "" : " "}`;
+      input.value = input.value.slice(0, mention.start) + replacement + suffix;
+      const cursor = mention.start + replacement.length;
+      input.setSelectionRange(cursor, cursor);
+    }
+    if (!state.fileReferences.some((item) => item.path === path)) {
+      state.fileReferences.push({ id: `${Date.now()}-${Math.random()}`, path });
+    }
+    renderAttachments();
+    hideAutocomplete();
+    input.focus();
+  }
+
+  function renderCommandMenu() {
+    const mention = currentFileMention();
+    if (mention && state.projectId) {
+      renderFileMenu(mention);
+      return;
+    }
+    const draft = input.value.trimStart();
+    if (!draft.startsWith("/") || draft.includes("\n") || draft.includes(" ")) {
+      hideAutocomplete();
+      return;
+    }
+    autocompleteKind = "commands";
+    fileMentionRange = null;
     const query = draft.slice(1).toLocaleLowerCase();
     commandMenu.replaceChildren(el("div", { class: "wsp-command-heading", text: "命令 · ↑ ↓ 选择 · Enter 选中" }));
     const commands = [...builtInCommands, ...state.commands.filter((item) =>
@@ -1262,7 +1381,7 @@ function renderWorkspace(view) {
   function selectCommand(command) {
     input.value = `/${command.name} `;
     input.setSelectionRange(input.value.length, input.value.length);
-    commandMenu.hidden = true;
+    hideAutocomplete();
     input.focus();
   }
 
@@ -1346,8 +1465,10 @@ function renderWorkspace(view) {
   }
 
   function selectProject(projectId) {
+    hideAutocomplete();
     state.projectId = projectId;
     state.attachments = [];
+    state.fileReferences = [];
     renderAttachments();
     if (!state.chosenModels.has(projectId)) {
       try { state.chosenModels.set(projectId, localStorage.getItem(`sona-code:model:${projectId}`) || ""); }
@@ -1372,8 +1493,10 @@ function renderWorkspace(view) {
   }
 
   function selectSession(projectId, sessionId) {
+    hideAutocomplete();
     state.projectId = projectId;
     state.attachments = [];
+    state.fileReferences = [];
     renderAttachments();
     if (!state.chosenModels.has(projectId)) {
       try { state.chosenModels.set(projectId, localStorage.getItem(`sona-code:model:${projectId}`) || ""); }
@@ -1549,14 +1672,14 @@ function renderWorkspace(view) {
   view.querySelector("#wsp-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const text = input.value.trim();
-    if ((!text && !state.attachments.length) || state.sending) return;
+    if ((!text && !state.attachments.length && !state.fileReferences.length) || state.sending) return;
     if (state.pendingImageCount) { toast("图片正在读取，请稍后发送", "error"); return; }
     if (!state.projectId) { openAddProject(); return; }
     if (!state.check?.found) { toast("未找到 OpenCode，请在设置中配置程序路径", "error"); return; }
     const slash = text.match(/^\/([A-Za-z0-9_-]+)(?:\s+([\s\S]*))?$/);
     const shell = text.startsWith("!") ? text.slice(1).trim() : "";
-    if (state.attachments.length && (text.startsWith("/") || text.startsWith("!"))) {
-      toast("图片请与普通消息一起发送", "error"); return;
+    if ((state.attachments.length || state.fileReferences.length) && (text.startsWith("/") || text.startsWith("!"))) {
+      toast("附件和文件引用请与普通消息一起发送", "error"); return;
     }
     if (text.startsWith("/") && !slash) { toast("命令格式应为 /命令 参数", "error"); return; }
     if (text.startsWith("!") && !shell) { toast("请输入要运行的命令", "error"); return; }
@@ -1564,7 +1687,7 @@ function renderWorkspace(view) {
       toast(`未知命令：/${slash[1]}`, "error"); return;
     }
     state.sending = true; renderHeader();
-    commandMenu.hidden = true;
+    hideAutocomplete();
     state.actionError = "";
     try {
       if (slash && await executeBuiltIn(slash[1])) return;
@@ -1587,12 +1710,14 @@ function renderWorkspace(view) {
         });
       } else {
         await api(`${sessionPath(state.projectId, state.sessionId)}/prompt`, {
-          method: "POST", body: { text, files: state.attachments.map(({ filename, mime, url }) => ({ filename, mime, url })), agent, ...model, ...variant }, silent: true,
+          method: "POST", body: { text, files: state.attachments.map(({ filename, mime, url }) => ({ filename, mime, url })),
+            references: state.fileReferences.map(({ path }) => ({ path })), agent, ...model, ...variant }, silent: true,
         });
       }
       if (!alive()) return;
       input.value = "";
       state.attachments = [];
+      state.fileReferences = [];
       renderAttachments();
       await loadSessions(activeProject());
       await refreshSelected();
@@ -1606,6 +1731,10 @@ function renderWorkspace(view) {
     }
   });
   input.addEventListener("input", () => { state.commandSelectedIndex = 0; renderCommandMenu(); });
+  input.addEventListener("click", () => renderCommandMenu());
+  input.addEventListener("keyup", (event) => {
+    if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) renderCommandMenu();
+  });
   view.querySelector("#wsp-attach").addEventListener("click", () => imagePicker.click());
   imagePicker.addEventListener("change", () => {
     void addImageFiles(Array.from(imagePicker.files || []));
@@ -1622,7 +1751,7 @@ function renderWorkspace(view) {
   input.addEventListener("compositionstart", () => { composingInput = true; });
   input.addEventListener("compositionend", () => { composingInput = false; });
   input.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") { commandMenu.hidden = true; return; }
+    if (event.key === "Escape") { hideAutocomplete(); return; }
     const composing = composingInput || event.isComposing || event.keyCode === 229;
     if (!composing && !commandMenu.hidden && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       const count = commandMenu.querySelectorAll(".wsp-command-option").length;
@@ -1634,12 +1763,16 @@ function renderWorkspace(view) {
       return;
     }
     if (!composing && event.key === "Enter" && !event.shiftKey && !commandMenu.hidden) {
-      const command = commandMenu.querySelectorAll(".wsp-command-option")[state.commandSelectedIndex];
-      if (command) {
-        event.preventDefault();
-        selectCommand({ name: command.querySelector("strong")?.textContent?.slice(1) || "" });
-        return;
+      event.preventDefault();
+      const option = commandMenu.querySelectorAll(".wsp-command-option")[state.commandSelectedIndex];
+      if (option) {
+        if (autocompleteKind === "files") {
+          selectFileReference(fileMatches[state.commandSelectedIndex]);
+        } else {
+          selectCommand({ name: option.querySelector("strong")?.textContent?.slice(1) || "" });
+        }
       }
+      return;
     }
     if (event.key === "Enter" && !event.shiftKey && !composing) {
       event.preventDefault();
