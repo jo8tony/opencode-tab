@@ -10,11 +10,13 @@ function renderWorkspace(view) {
   let refreshTimer = null;
   let refreshing = false;
   let refreshRequested = false;
+  let composingInput = false;
   let lastSessionListRefresh = 0;
   const state = {
     projects: [], sessions: new Map(), errors: new Map(),
     projectId: workspaceSelection.projectId, sessionId: workspaceSelection.sessionId,
-    messages: [], permissions: [], questions: [], questionDrafts: new Map(), diffs: [], statuses: {},
+    messages: [], permissions: [], questions: [], questionDrafts: new Map(), questionPages: new Map(),
+    questionErrors: new Map(), diffs: [], statuses: {},
     check: null, tab: "chat", search: "", sending: false, chosenModels: new Map(),
     chosenAgents: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], modelLoadError: "",
     collapsedProjects: new Set(), expandedTools: new Map(), pendingAction: "", actionError: "",
@@ -36,7 +38,7 @@ function renderWorkspace(view) {
         <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" hidden>停止任务</button><span class="wsp-status" id="wsp-status">准备中</span></header>
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button></nav>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
-        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><textarea class="wsp-input" id="wsp-input" placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" rows="2"></textarea><div class="wsp-composer-bottom"><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">模型 · 自动选择</button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent"><option value="">Build</option></select><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-7-7 7 7-7 7"/></svg></button></div></form><div class="wsp-composer-note">输入 / 查看命令；输入 ! 在项目目录运行命令。OpenCode 可读写文件，请核对权限请求。</div></div>
+        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><textarea class="wsp-input" id="wsp-input" placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" rows="2"></textarea><div class="wsp-composer-bottom"><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">模型 · 自动选择</button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent"><option value="">Build</option></select><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-composer-note">输入 / 查看命令；输入 ! 在项目目录运行命令。OpenCode 可读写文件，请核对权限请求。</div></div>
       </div>
     </section>`;
 
@@ -213,66 +215,101 @@ function renderWorkspace(view) {
   function questionCard(request) {
     const drafts = state.questionDrafts.get(request.id) || [];
     state.questionDrafts.set(request.id, drafts);
+    const questions = request.questions || [];
+    const page = Math.min(state.questionPages.get(request.id) || 0, Math.max(questions.length - 1, 0));
+    state.questionPages.set(request.id, page);
+    const question = questions[page];
+    const draft = drafts[page] || { selected: [], custom: "" };
+    drafts[page] = draft;
     const card = el("div", { class: "wsp-question" },
-      el("strong", { text: "OpenCode 需要你的回答" }));
-    (request.questions || []).forEach((question, index) => {
-      const draft = drafts[index] || { selected: [], custom: "" };
-      drafts[index] = draft;
-      const group = el("fieldset", { class: "wsp-question-group" },
-        el("legend", { text: question.question || question.header || `问题 ${index + 1}` }));
-      if (question.multiple) group.append(el("p", { text: "可多选" }));
-      for (const option of question.options || []) {
-        const inputOption = el("input", {
-          type: question.multiple ? "checkbox" : "radio", name: `wsp-question-${request.id}-${index}`,
-          value: option.label, checked: draft.selected.includes(option.label),
-          onchange: (event) => {
-            if (question.multiple) {
-              draft.selected = event.target.checked
-                ? [...draft.selected, option.label]
-                : draft.selected.filter((label) => label !== option.label);
-            } else draft.selected = [option.label];
-          },
-        });
-        group.append(el("label", { class: "wsp-question-option" }, inputOption,
-          el("span", {}, el("strong", { text: option.label }),
-            option.description ? el("small", { text: option.description }) : null)));
-      }
-      if (question.custom !== false) group.append(el("input", {
-        class: "wsp-question-custom", type: "text", placeholder: "或输入自己的回答",
-        "data-request-id": request.id, "data-question-index": index,
-        value: draft.custom, oninput: (event) => { draft.custom = event.target.value; },
+      el("div", { class: "wsp-question-head" },
+        el("strong", { text: "OpenCode 需要你的回答" }),
+        el("span", { class: "wsp-question-count", text: `${page + 1} / ${questions.length}` })));
+    if (!question) return card;
+    const group = el("fieldset", { class: "wsp-question-group" },
+      el("legend", { text: question.question || question.header || `问题 ${page + 1}` }));
+    if (question.multiple) group.append(el("p", { text: "可多选" }));
+    for (const option of question.options || []) {
+      const inputOption = el("input", {
+        type: question.multiple ? "checkbox" : "radio", name: `wsp-question-${request.id}-${page}`,
+        value: option.label, checked: draft.selected.includes(option.label),
+        onchange: (event) => {
+          state.questionErrors.delete(request.id);
+          errorLine.textContent = "";
+          if (question.multiple) {
+            draft.selected = event.target.checked
+              ? [...draft.selected, option.label]
+              : draft.selected.filter((label) => label !== option.label);
+          } else draft.selected = [option.label];
+        },
+      });
+      group.append(el("label", { class: "wsp-question-option" }, inputOption,
+        el("span", {}, el("strong", { text: option.label }),
+          option.description ? el("small", { text: option.description }) : null)));
+    }
+    if (question.custom !== false) group.append(el("input", {
+      class: "wsp-question-custom", type: "text", placeholder: "或输入自己的回答",
+      "data-request-id": request.id, "data-question-index": page,
+      value: draft.custom, oninput: (event) => {
+        draft.custom = event.target.value;
+        state.questionErrors.delete(request.id);
+        errorLine.textContent = "";
+      },
+    }));
+    card.append(group);
+    const errorLine = el("p", { class: "wsp-question-error", text: state.questionErrors.get(request.id) || "" });
+    const actions = el("div", { class: "wsp-question-actions" });
+    const navigation = el("div", { class: "wsp-question-navigation" });
+    navigation.append(el("button", {
+      class: "wsp-mini", type: "button", text: "← 上一题", disabled: page === 0,
+      onclick: () => { state.questionPages.set(request.id, page - 1); renderMain(); },
+    }));
+    if (page < questions.length - 1) {
+      navigation.append(el("button", {
+        class: "wsp-mini primary", type: "button", text: "下一题 →",
+        onclick: () => { state.questionPages.set(request.id, page + 1); renderMain(); },
       }));
-      card.append(group);
-    });
-    const errorLine = el("p", { class: "wsp-question-error" });
-    card.append(errorLine, el("div", { class: "wsp-permission-actions" },
-      el("button", { class: "wsp-mini primary", type: "button", text: "提交回答", onclick: async () => {
-        const answers = drafts.map((draft, index) => {
-          const values = request.questions[index]?.multiple ? draft.selected.slice() : draft.selected.slice(0, 1);
-          if (draft.custom.trim()) {
-            if (!request.questions[index]?.multiple) return [draft.custom.trim()];
-            values.push(draft.custom.trim());
+    } else {
+      navigation.append(el("button", { class: "wsp-mini primary", type: "button", text: "提交回答", onclick: async () => {
+        const answers = questions.map((question, index) => {
+          const answerDraft = drafts[index] || { selected: [], custom: "" };
+          const values = question.multiple ? answerDraft.selected.slice() : answerDraft.selected.slice(0, 1);
+          if (answerDraft?.custom.trim()) {
+            if (!question.multiple) return [answerDraft.custom.trim()];
+            values.push(answerDraft.custom.trim());
           }
           return values;
         });
-        if (answers.some((answer) => !answer.length)) { errorLine.textContent = "请回答所有问题"; return; }
+        const missing = answers.findIndex((answer) => !answer.length);
+        if (missing >= 0) {
+          state.questionPages.set(request.id, missing);
+          state.questionErrors.set(request.id, "请先回答每个问题");
+          renderMain();
+          return;
+        }
         try {
           await api(`workspace/projects/${encodeURIComponent(state.projectId)}/questions/${encodeURIComponent(request.id)}/reply`, {
             method: "POST", body: { answers }, silent: true,
           });
           state.questionDrafts.delete(request.id);
+          state.questionPages.delete(request.id);
+          state.questionErrors.delete(request.id);
           await refreshSelected();
         } catch (error) { errorLine.textContent = `提交失败：${detail(error)}`; }
-      } }),
-      el("button", { class: "wsp-mini", type: "button", text: "跳过", onclick: async () => {
-        try {
-          await api(`workspace/projects/${encodeURIComponent(state.projectId)}/questions/${encodeURIComponent(request.id)}/reject`, {
-            method: "POST", body: {}, silent: true,
-          });
-          state.questionDrafts.delete(request.id);
-          await refreshSelected();
-        } catch (error) { errorLine.textContent = `操作失败：${detail(error)}`; }
-      } })));
+      } }));
+    }
+    actions.append(navigation, el("button", { class: "wsp-mini", type: "button", text: "跳过", onclick: async () => {
+      try {
+        await api(`workspace/projects/${encodeURIComponent(state.projectId)}/questions/${encodeURIComponent(request.id)}/reject`, {
+          method: "POST", body: {}, silent: true,
+        });
+        state.questionDrafts.delete(request.id);
+        state.questionPages.delete(request.id);
+        state.questionErrors.delete(request.id);
+        await refreshSelected();
+      } catch (error) { errorLine.textContent = `操作失败：${detail(error)}`; }
+    } }));
+    card.append(errorLine, actions);
     return card;
   }
 
@@ -874,9 +911,12 @@ function renderWorkspace(view) {
     }
   });
   input.addEventListener("input", renderCommandMenu);
+  input.addEventListener("compositionstart", () => { composingInput = true; });
+  input.addEventListener("compositionend", () => { composingInput = false; });
   input.addEventListener("keydown", (event) => {
     if (event.key === "Escape") { commandMenu.hidden = true; return; }
-    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    const composing = composingInput || event.isComposing || event.keyCode === 229;
+    if (event.key === "Enter" && !event.shiftKey && !composing) {
       event.preventDefault();
       view.querySelector("#wsp-form").requestSubmit();
     }
