@@ -117,7 +117,35 @@ async def project_status(project_id: str, request: Request):
 @router.get("/workspace/projects/{project_id}/models")
 async def project_models(project_id: str, request: Request):
     path = _project_path(request, project_id)
-    return await _opencode(request, path, "GET", "/config/providers")
+    data = await _opencode(request, path, "GET", "/config/providers")
+    auth = await _opencode(request, path, "GET", "/provider")
+    return {
+        **(data if isinstance(data, dict) else {}),
+        "connected": auth.get("connected", []) if isinstance(auth, dict) else [],
+    }
+
+
+class ProviderApiKeyBody(BaseModel):
+    key: str = Field(min_length=1, max_length=10_000)
+
+
+@router.post("/workspace/projects/{project_id}/providers/{provider_id}/api-key")
+async def save_provider_api_key(project_id: str, provider_id: str, body: ProviderApiKeyBody, request: Request):
+    path = _project_path(request, project_id)
+    await _opencode(request, path, "PUT", f"/auth/{_safe_id(provider_id)}", {"type": "api", "key": body.key})
+    return {"ok": True, "provider_id": provider_id, "configured": True}
+
+
+@router.get("/workspace/projects/{project_id}/agents")
+async def project_agents(project_id: str, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "GET", "/agent")
+
+
+@router.get("/workspace/projects/{project_id}/commands")
+async def project_commands(project_id: str, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "GET", "/command")
 
 
 @router.get("/workspace/projects/{project_id}/sessions/{session_id}/messages")
@@ -130,15 +158,61 @@ class PromptBody(BaseModel):
     text: str = Field(min_length=1, max_length=100_000)
     provider_id: str | None = None
     model_id: str | None = None
+    agent: str | None = None
+
+
+def _model_choice(provider_id: str | None, model_id: str | None) -> dict | None:
+    if provider_id and model_id:
+        return {"providerID": provider_id, "modelID": model_id}
+    return None
 
 
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/prompt")
 async def send_prompt(project_id: str, session_id: str, body: PromptBody, request: Request):
     path = _project_path(request, project_id)
     prompt: dict = {"parts": [{"type": "text", "text": body.text}]}
-    if body.provider_id and body.model_id:
-        prompt["model"] = {"providerID": body.provider_id, "modelID": body.model_id}
+    model = _model_choice(body.provider_id, body.model_id)
+    if model:
+        prompt["model"] = model
+    if body.agent:
+        prompt["agent"] = body.agent
     return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/prompt_async", prompt)
+
+
+class CommandBody(BaseModel):
+    command: str = Field(min_length=1, pattern=r"^[A-Za-z0-9_-]+$")
+    arguments: str = Field(default="", max_length=100_000)
+    provider_id: str | None = None
+    model_id: str | None = None
+    agent: str | None = None
+
+
+@router.post("/workspace/projects/{project_id}/sessions/{session_id}/command")
+async def run_command(project_id: str, session_id: str, body: CommandBody, request: Request):
+    path = _project_path(request, project_id)
+    payload: dict = {"command": body.command, "arguments": body.arguments}
+    if body.provider_id and body.model_id:
+        payload["model"] = f"{body.provider_id}/{body.model_id}"
+    if body.agent:
+        payload["agent"] = body.agent
+    return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/command", payload)
+
+
+class ShellBody(BaseModel):
+    command: str = Field(min_length=1, max_length=100_000)
+    agent: str = Field(default="build", min_length=1)
+    provider_id: str | None = None
+    model_id: str | None = None
+
+
+@router.post("/workspace/projects/{project_id}/sessions/{session_id}/shell")
+async def run_shell(project_id: str, session_id: str, body: ShellBody, request: Request):
+    path = _project_path(request, project_id)
+    payload: dict = {"command": body.command, "agent": body.agent}
+    model = _model_choice(body.provider_id, body.model_id)
+    if model:
+        payload["model"] = model
+    return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/shell", payload)
 
 
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/abort")
@@ -157,6 +231,28 @@ async def session_diff(project_id: str, session_id: str, request: Request):
 async def list_permissions(project_id: str, request: Request):
     path = _project_path(request, project_id)
     return await _opencode(request, path, "GET", "/permission")
+
+
+@router.get("/workspace/projects/{project_id}/questions")
+async def list_questions(project_id: str, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "GET", "/question")
+
+
+class QuestionReplyBody(BaseModel):
+    answers: list[list[str]] = Field(min_length=1, max_length=20)
+
+
+@router.post("/workspace/projects/{project_id}/questions/{question_id}/reply")
+async def reply_question(project_id: str, question_id: str, body: QuestionReplyBody, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "POST", f"/question/{_safe_id(question_id)}/reply", {"answers": body.answers})
+
+
+@router.post("/workspace/projects/{project_id}/questions/{question_id}/reject")
+async def reject_question(project_id: str, question_id: str, request: Request):
+    path = _project_path(request, project_id)
+    return await _opencode(request, path, "POST", f"/question/{_safe_id(question_id)}/reject", {})
 
 
 class PermissionReplyBody(BaseModel):

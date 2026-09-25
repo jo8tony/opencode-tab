@@ -23,6 +23,16 @@ def test_workspace_projects_and_session_routes(tmp_path):
             return {"id": "ses_new", "title": body.get("title")}
         if endpoint.endswith("/message"):
             return [{"info": {"role": "user"}, "parts": [{"type": "text", "text": "hello"}]}]
+        if endpoint == "/agent":
+            return [{"name": "build", "mode": "primary"}]
+        if endpoint == "/command":
+            return [{"name": "review", "description": "Review changes"}]
+        if endpoint == "/config/providers":
+            return {"providers": [{"id": "main", "models": {"model-x": {}}}], "default": {}}
+        if endpoint == "/provider":
+            return {"connected": ["main"]}
+        if endpoint == "/question":
+            return [{"id": "que_123", "sessionID": "ses_123", "questions": []}]
         return {"ok": True}
 
     app.state.runtime.workspace.request = fake_request
@@ -42,7 +52,23 @@ def test_workspace_projects_and_session_routes(tmp_path):
         assert client.get(f"{prefix}/projects/{project_id}/sessions").json()["items"][0]["id"] == "ses_123"
         assert client.post(f"{prefix}/projects/{project_id}/sessions", json={"title": "new"}).json()["id"] == "ses_new"
         assert client.get(f"{prefix}/projects/{project_id}/sessions/ses_123/messages").json()[0]["parts"][0]["text"] == "hello"
-        assert client.get(f"{prefix}/projects/{project_id}/models").status_code == 200
+        models = client.get(f"{prefix}/projects/{project_id}/models").json()
+        assert models["providers"][0]["id"] == "main"
+        assert models["connected"] == ["main"]
+        saved_key = client.post(f"{prefix}/projects/{project_id}/providers/main/api-key",
+                                json={"key": "test-secret"})
+        assert saved_key.json() == {"ok": True, "provider_id": "main", "configured": True}
+        assert calls[-1][1:] == ("PUT", "/auth/main", {"type": "api", "key": "test-secret"})
+        assert client.post(f"{prefix}/projects/{project_id}/providers/main/api-key",
+                           json={"key": ""}).status_code == 422
+        assert client.get(f"{prefix}/projects/{project_id}/agents").json()[0]["name"] == "build"
+        assert client.get(f"{prefix}/projects/{project_id}/commands").json()[0]["name"] == "review"
+        assert client.get(f"{prefix}/projects/{project_id}/questions").json()[0]["id"] == "que_123"
+        assert client.post(f"{prefix}/projects/{project_id}/questions/que_123/reply",
+                           json={"answers": [["Yes"]]}).status_code == 200
+        assert calls[-1][1:] == ("POST", "/question/que_123/reply", {"answers": [["Yes"]]})
+        assert client.post(f"{prefix}/projects/{project_id}/questions/que_123/reject").status_code == 200
+        assert calls[-1][1:] == ("POST", "/question/que_123/reject", {})
         assert client.get(f"{prefix}/projects/{project_id}/permissions").status_code == 200
         assert client.post(
             f"{prefix}/projects/{project_id}/permissions/per_123/reply",
@@ -59,6 +85,26 @@ def test_workspace_projects_and_session_routes(tmp_path):
             {"parts": [{"type": "text", "text": "fix it"}],
              "model": {"providerID": "main", "modelID": "model-x"}},
         )
+        client.post(f"{prefix}/projects/{project_id}/sessions/ses_123/prompt",
+                    json={"text": "plan it", "agent": "plan"})
+        assert calls[-1][3]["agent"] == "plan"
+        command = client.post(f"{prefix}/projects/{project_id}/sessions/ses_123/command",
+                              json={"command": "review", "arguments": "HEAD", "agent": "build",
+                                    "provider_id": "main", "model_id": "model-x"})
+        assert command.status_code == 200
+        assert calls[-1][1:] == (
+            "POST", "/session/ses_123/command",
+            {"command": "review", "arguments": "HEAD", "agent": "build",
+             "model": "main/model-x"},
+        )
+        shell = client.post(f"{prefix}/projects/{project_id}/sessions/ses_123/shell",
+                            json={"command": "pwd", "agent": "build"})
+        assert shell.status_code == 200
+        assert calls[-1][1:] == (
+            "POST", "/session/ses_123/shell", {"command": "pwd", "agent": "build"},
+        )
+        assert client.post(f"{prefix}/projects/{project_id}/sessions/ses_123/command",
+                           json={"command": "bad/name"}).status_code == 422
         assert client.get(f"{prefix}/projects/missing/sessions").status_code == 404
         assert client.get(f"{prefix}/projects/{project_id}/sessions/bad.id/messages").status_code == 400
         assert client.delete(f"{prefix}/projects/{project_id}").json() == {"ok": True}

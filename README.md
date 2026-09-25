@@ -141,7 +141,7 @@ curl http://127.0.0.1:8117/up/deepseek/v1/chat/completions -H "Content-Type: app
 
 ## 桌面工作区
 
-打开 Web UI 默认进入「工作区」。点击左侧 `＋` 添加项目目录，再新建或选择 OpenCode 对话；右侧可发送文字消息、查看工具活动和文件改动，并处理 OpenCode 权限请求。工作区在后台运行 `opencode serve`，不显示 OpenCode 的终端界面。Windows 安装包使用随包 OpenCode，macOS 从 PATH 查找。模型及代理接口来源沿用「设置 → OpenCode 与终端」。
+打开 Web UI 默认进入「工作区」。点击左侧 `＋` 添加项目目录，再新建或选择 OpenCode 对话；右侧可发送文字消息、查看工具活动和文件改动，并处理 OpenCode 权限请求与交互式提问。模型菜单按 Provider 展示 OpenCode 返回的模型，可搜索并选择 Agent；输入 `/` 查看应用快捷命令和 OpenCode 项目命令，输入 `!` 在项目目录执行 shell 命令。可在 Provider 分组中设置 API Key 到本机 OpenCode 凭据存储。模型认证失败会显示服务商、HTTP 状态和错误详情，可填回上次提问后切换模型重试。工作区在后台运行 `opencode serve`，不显示 OpenCode 的终端界面。Windows 安装包使用随包 OpenCode，macOS 从 PATH 查找。模型及代理接口来源沿用「设置 → OpenCode 与终端」。
 
 工作区的对话历史由 OpenCode 持久化；顶部「轨迹」与「调用列表」继续显示本代理录制的模型请求。架构和首版范围见 [工作区设计](docs/workspace.md)。
 
