@@ -17,7 +17,7 @@ def test_workspace_projects_and_session_routes(tmp_path):
     app = create_app(config, config_path=str(tmp_path / "config.json"))
     calls = []
 
-    async def fake_request(project, cfg, method, endpoint, *, body=None):
+    async def fake_request(project, cfg, method, endpoint, *, body=None, params=None):
         calls.append((project, method, endpoint, body))
         if endpoint == "/session" and method == "GET":
             return [{"id": "ses_123", "title": "existing"}]
