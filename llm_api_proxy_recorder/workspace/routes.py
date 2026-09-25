@@ -8,7 +8,7 @@ import hashlib
 import os
 import re
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -43,10 +43,13 @@ def _safe_id(value: str) -> str:
     return quote(value, safe="")
 
 
-async def _opencode(request: Request, project: str, method: str, endpoint: str, body: dict | None = None):
+async def _opencode(
+    request: Request, project: str, method: str, endpoint: str,
+    body: dict | None = None, params: dict[str, str | int] | None = None,
+):
     try:
         return await request.app.state.runtime.workspace.request(
-            project, request.app.state.runtime.config, method, endpoint, body=body,
+            project, request.app.state.runtime.config, method, endpoint, body=body, params=params,
         )
     except WorkspaceError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
@@ -244,8 +247,10 @@ async def search_project_files(
     project_id: str, request: Request, query: str = Query(default="", max_length=200),
 ):
     root = Path(_project_path(request, project_id)).resolve()
-    endpoint = "/find/file?" + urlencode({"query": query, "type": "file", "limit": 30})
-    matches = await _opencode(request, str(root), "GET", endpoint)
+    matches = await _opencode(
+        request, str(root), "GET", "/find/file",
+        params={"query": query, "type": "file", "limit": 30},
+    )
     if not isinstance(matches, list):
         return {"items": []}
 

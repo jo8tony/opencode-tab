@@ -114,12 +114,12 @@ class WorkspaceManager:
 
     async def request(
         self, project: str, config: AppConfig, method: str, endpoint: str,
-        *, body: dict | None = None,
+        *, body: dict | None = None, params: dict[str, str | int] | None = None,
     ) -> object:
         server = await self.ensure(project, config)
         try:
             response = await server.client.request(
-                method, endpoint, params={"directory": project}, json=body,
+                method, endpoint, params={"directory": project, **(params or {})}, json=body,
                 timeout=180 if endpoint.endswith(("/command", "/shell", "/summarize")) else 20,
             )
         except httpx.RequestError as exc:
