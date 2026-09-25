@@ -1267,7 +1267,7 @@ function renderWorkspace(view) {
   function currentFileMention() {
     const cursor = input.selectionStart ?? input.value.length;
     const before = input.value.slice(0, cursor);
-    const match = /(^|[\s([{\"'])@([^\s@]*)$/u.exec(before);
+    const match = /(^|[\s(\[{"'])@([^\s@]*)$/u.exec(before);
     if (!match) return null;
     return { query: match[2], start: cursor - match[2].length - 1, end: cursor };
   }
