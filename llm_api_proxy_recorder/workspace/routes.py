@@ -6,6 +6,9 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import secrets
+import time
+import fnmatch
 import os
 import re
 import subprocess
@@ -17,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from llm_api_proxy_recorder.admin.skills import WORKSPACE_COMMANDS
 from llm_api_proxy_recorder.terminal.manager import resolve_opencode
 from llm_api_proxy_recorder.workspace.manager import WorkspaceError
 
@@ -285,7 +289,11 @@ async def project_agents(project_id: str, request: Request):
 @router.get("/workspace/projects/{project_id}/commands")
 async def project_commands(project_id: str, request: Request):
     path = _project_path(request, project_id)
-    return await _opencode(request, path, "GET", "/command")
+    commands = await _opencode(request, path, "GET", "/command")
+    store = request.app.state.runtime.skills
+    installed = await asyncio.to_thread(store.list)
+    disabled = {item["name"] for item in installed["items"] if not item["enabled"]}
+    return [item for item in commands if item.get("source") != "skill" or item.get("name") not in disabled]
 
 
 @router.get("/workspace/projects/{project_id}/files")
@@ -323,7 +331,8 @@ async def search_project_files(
 @router.get("/workspace/projects/{project_id}/sessions/{session_id}/messages")
 async def list_messages(project_id: str, session_id: str, request: Request):
     path = _project_path(request, project_id)
-    return await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}/message")
+    messages = await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}/message")
+    return await asyncio.to_thread(request.app.state.runtime.skills.annotate_messages, path, session_id, messages)
 
 
 class PromptBody(BaseModel):
@@ -428,31 +437,77 @@ class CommandBody(BaseModel):
 
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/command")
 async def run_command(project_id: str, session_id: str, body: CommandBody, request: Request):
-    path = _project_path(request, project_id)
-    installed = await asyncio.to_thread(request.app.state.runtime.skills.list)
-    managed = next((item for item in installed["items"]
-                    if item["name"] == body.command), None)
-    if managed:
-        if not managed["enabled"] or managed.get("error"):
-            raise HTTPException(status_code=409, detail="该技能已停用或格式无效，请重新选择技能")
-        available = await _native_managed_skill_names(request, path, [managed])
-        if body.command not in available:
-            raise HTTPException(status_code=409, detail="OpenCode 未加载该技能或存在同名技能/命令，请检查配置")
-    payload: dict = {"command": body.command, "arguments": body.arguments}
-    if body.provider_id and body.model_id:
-        payload["model"] = f"{body.provider_id}/{body.model_id}"
-    if body.agent:
-        payload["agent"] = body.agent
-    if body.variant:
-        payload["variant"] = body.variant
-    return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/command", payload)
+    async with request.app.state.runtime.workspace.task_dispatch():
+        path = _project_path(request, project_id)
+        installed = await asyncio.to_thread(request.app.state.runtime.skills.list)
+        managed = next((item for item in installed["items"]
+                        if item["name"] == body.command and not item.get("conflict")), None)
+        catalog = None
+        if managed is None:
+            catalog = await _native_skill_catalog(request, path)
+            managed = next((item for item in _native_skill_items(catalog) if item["name"] == body.command), None)
+            if managed:
+                managed["enabled"] = await asyncio.to_thread(request.app.state.runtime.skills.permission, body.command) != "deny"
+        if managed:
+            if not managed["enabled"] or managed.get("error"):
+                raise HTTPException(status_code=409, detail="该技能已停用或格式无效，请重新选择技能")
+            available = await _native_managed_skill_names(request, path, [managed], catalog)
+            if body.command not in available:
+                raise HTTPException(status_code=409, detail="OpenCode 未加载该技能或存在同名技能/命令，请检查配置")
+        if managed:
+            if not await _agent_allows_skill(request, path, body.command, body.agent):
+                raise HTTPException(409, "当前 Agent 禁止使用该技能，请切换 Agent 或修改权限")
+        payload: dict = {"command": body.command, "arguments": body.arguments}
+        if managed:
+            message_id = "msg_" + format(int(time.time() * 1000) << 12, "012x") + secrets.token_hex(7)
+            payload["messageID"] = message_id
+            await asyncio.to_thread(request.app.state.runtime.skills.record_use,
+                                    path, session_id, message_id, managed, body.arguments)
+        if body.provider_id and body.model_id:
+            payload["model"] = f"{body.provider_id}/{body.model_id}"
+        if body.agent:
+            payload["agent"] = body.agent
+        if body.variant:
+            payload["variant"] = body.variant
+        return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/command", payload)
 
 
-async def _native_managed_skill_names(request: Request, path: str, installed: list[dict]) -> set[str]:
+def _agent_skill_allowed(agents: object, name: str, agent: str | None) -> bool:
+    if not isinstance(agents, list):
+        return True
+    chosen = next((item for item in agents if item.get("name") == (agent or "build")), {})
+    action = "allow"
+    for rule in chosen.get("permission", []):
+        if rule.get("permission") in ("skill", "*") and fnmatch.fnmatchcase(name, rule.get("pattern", "*")):
+            action = rule.get("action", "allow")
+    return action != "deny"
+
+
+async def _agent_allows_skill(request: Request, path: str, name: str, agent: str | None) -> bool:
+    return _agent_skill_allowed(await _opencode(request, path, "GET", "/agent"), name, agent)
+
+
+async def _native_skill_catalog(request: Request, path: str) -> tuple[list, list]:
     commands, skills = await asyncio.gather(
         _opencode(request, path, "GET", "/command"),
         _opencode(request, path, "GET", "/skill"),
     )
+    return (commands if isinstance(commands, list) else [], skills if isinstance(skills, list) else [])
+
+
+def _native_skill_items(catalog: tuple[list, list]) -> list[dict]:
+    commands, skills = catalog
+    names = {item.get("name") for item in commands if item.get("source") == "skill"}
+    return [{"id": item["name"], "name": item["name"], "description": item.get("description", ""),
+             "path": str(Path(item["location"]).parent), "source": "native", "enabled": True}
+            for item in skills if item.get("name") in names and isinstance(item.get("location"), str)
+            and not item["location"].startswith("<") and item["name"] not in WORKSPACE_COMMANDS]
+
+
+async def _native_managed_skill_names(
+    request: Request, path: str, installed: list[dict], catalog: tuple[list, list] | None = None,
+) -> set[str]:
+    commands, skills = catalog if catalog is not None else await _native_skill_catalog(request, path)
     names = {item.get("name") for item in commands
              if isinstance(item, dict) and item.get("source") == "skill"}
     def matching_locations() -> set[str]:
@@ -468,12 +523,22 @@ async def _native_managed_skill_names(request: Request, path: str, installed: li
 
 
 @router.get("/workspace/projects/{project_id}/skills")
-async def project_skills(project_id: str, request: Request) -> dict:
+async def project_skills(project_id: str, request: Request, agent: str | None = None) -> dict:
     path = _project_path(request, project_id)
     installed = await asyncio.to_thread(request.app.state.runtime.skills.list)
     enabled = [item for item in installed["items"]
-               if item["enabled"] and not item.get("error")]
-    names = await _native_managed_skill_names(request, path, enabled)
+               if item["enabled"] and not item.get("error") and not item.get("conflict")]
+    catalog = await _native_skill_catalog(request, path)
+    names = await _native_managed_skill_names(request, path, enabled, catalog)
+    installed_names = {item["name"] for item in installed["items"]}
+    extra = [item for item in _native_skill_items(catalog) if item["name"] not in installed_names]
+    for item in extra:
+        if await asyncio.to_thread(request.app.state.runtime.skills.permission, item["name"]) != "deny":
+            enabled.append(item)
+            names.add(item["name"])
+    if names:
+        agents = await _opencode(request, path, "GET", "/agent")
+        names = {name for name in names if _agent_skill_allowed(agents, name, agent)}
     return {"items": [item for item in enabled if item["name"] in names],
             "unavailable": [item["name"] for item in enabled if item["name"] not in names]}
 

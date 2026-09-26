@@ -7,7 +7,10 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 from pathlib import Path
+
+CONFIG_LOCK = threading.RLock()
 
 ORIGINAL_XDG_PREFIX = "LLMPR_ORIGINAL_"
 IMPORT_CONFIG_FILES = ("opencode.json", "opencode.jsonc", "tui.json")
@@ -194,7 +197,7 @@ def read_global_config() -> tuple[Path, str, str]:
     return path, content, hashlib.sha256(raw).hexdigest()
 
 
-def validate_jsonc(content: str) -> None:
+def _jsonc_text(content: str) -> str:
     """JSONC 支持注释及末尾逗号；解析时仅剔除语法，保存时写原文。"""
     chars = list(content)
     i = 0
@@ -247,12 +250,71 @@ def validate_jsonc(content: str) -> None:
             if j < len(chars) and chars[j] in "}]":
                 chars[i] = " "
         i += 1
+    return "".join(chars)
+
+
+def parse_jsonc(content: str) -> dict:
     try:
-        obj = json.loads("".join(chars))
+        obj = json.loads(_jsonc_text(content))
     except json.JSONDecodeError as exc:
         raise ValueError(f"JSONC 格式错误：第 {exc.lineno} 行，第 {exc.colno} 列：{exc.msg}") from exc
     if not isinstance(obj, dict):
         raise ValueError("OpenCode 配置必须是 JSON 对象")
+    return obj
+
+
+def validate_jsonc(content: str) -> None:
+    parse_jsonc(content)
+
+
+def patch_jsonc(content: str, keys: list[str], value: object) -> str:
+    """Change one config leaf while retaining surrounding comments and formatting."""
+    parse_jsonc(content)
+    clean = _jsonc_text(content)
+    decoder = json.JSONDecoder()
+
+    def skip(i: int) -> int:
+        while i < len(clean) and clean[i].isspace():
+            i += 1
+        return i
+
+    start = skip(0)
+    for depth, key in enumerate(keys):
+        _, end = decoder.raw_decode(clean, start)
+        i = skip(start + 1)
+        found = None
+        last_end = start + 1
+        while i < end - 1:
+            name, key_end = decoder.raw_decode(clean, i)
+            value_start = skip(skip(key_end) + 1)
+            current, value_end = decoder.raw_decode(clean, value_start)
+            if name == key:
+                found = (value_start, value_end, current)
+            last_end = value_end
+            i = skip(value_end)
+            if i < end - 1 and clean[i] == ",":
+                i = skip(i + 1)
+        if found and depth < len(keys) - 1 and isinstance(found[2], dict):
+            start = found[0]
+            continue
+        replacement = value
+        for child in reversed(keys[depth + 1:]):
+            replacement = {child: replacement}
+        # A scalar permission means all tools; retain it when expanding to an object.
+        if found and depth < len(keys) - 1 and isinstance(found[2], str):
+            replacement = {"*": found[2], **replacement}
+        encoded = json.dumps(replacement, ensure_ascii=False)
+        if found:
+            return content[:found[0]] + encoded + content[found[1]:]
+        closing = end - 1
+        prefix = "," if last_end > start + 1 else ""
+        # The masking pass removes trailing commas, but an existing comma is reusable.
+        if "," in _jsonc_text(content[last_end:closing]):
+            prefix = ""
+        newline = "\r\n" if "\r\n" in content else "\n"
+        addition = newline + "  " + json.dumps(key) + ": " + encoded + newline
+        return content[:last_end] + prefix + content[last_end:closing] + addition + content[closing:]
+    raise ValueError("配置路径不能为空")
 
 
 def write_global_config(path: Path, content: str) -> str:

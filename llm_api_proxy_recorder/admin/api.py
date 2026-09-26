@@ -400,14 +400,18 @@ class OpenCodeConfigUpdate(BaseModel):
 
 @router.put("/settings/opencode-config")
 def put_opencode_config(body: OpenCodeConfigUpdate) -> dict:
-    path, _, revision = read_global_config()
-    if body.revision != revision:
-        raise HTTPException(status_code=409, detail="配置文件已在别处修改，请重新加载后再保存")
-    try:
-        validate_jsonc(body.content)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"ok": True, "path": str(path), "revision": write_global_config(path, body.content)}
+    from llm_api_proxy_recorder.admin.opencode_config import CONFIG_LOCK
+
+    with CONFIG_LOCK:
+        path, _, revision = read_global_config()
+        if body.revision != revision:
+            raise HTTPException(status_code=409, detail="配置文件已在别处修改，请重新加载后再保存")
+        try:
+            validate_jsonc(body.content)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"ok": True, "path": str(path), "revision": write_global_config(path, body.content)}
+
 
 
 @router.get("/settings/opencode-import")

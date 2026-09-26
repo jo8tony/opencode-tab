@@ -9,6 +9,7 @@ import secrets
 import signal
 import socket
 import subprocess
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator, Callable
@@ -120,13 +121,19 @@ class WorkspaceManager:
     ) -> object:
         # Exclude skill changes during task dispatch while keeping project tasks parallel.
         if method == "POST" and endpoint.endswith(("/prompt_async", "/command", "/shell", "/summarize")):
-            async with self._skill_changes:
-                self._task_requests += 1
-            try:
+            async with self.task_dispatch():
                 return await self._request(project, config, method, endpoint, body=body, params=params)
-            finally:
-                self._task_requests -= 1
         return await self._request(project, config, method, endpoint, body=body, params=params)
+
+    @asynccontextmanager
+    async def task_dispatch(self) -> AsyncIterator[None]:
+        """Protect preflight validation and dispatch from concurrent skill mutations."""
+        async with self._skill_changes:
+            self._task_requests += 1
+        try:
+            yield
+        finally:
+            self._task_requests -= 1
 
     async def _request(
         self, project: str, config: AppConfig, method: str, endpoint: str,
@@ -171,15 +178,11 @@ class WorkspaceManager:
                     raise WorkspaceError("工作区有任务正在运行，请任务结束后再修改技能", 409)
             result = await asyncio.to_thread(operation)
             for path, server in active:
-                try:
-                    response = await server.client.post("/instance/dispose", params={"directory": path})
-                    response.raise_for_status()
-                except httpx.HTTPError:
-                    # Older/custom binaries may lack dispose; the next request restarts
-                    # the idle process while preserving OpenCode's persisted sessions.
-                    await server.client.aclose()
-                    await self._stop_process(server.process)
-                    self._servers.pop(path, None)
+                # Inline skills.paths is captured at process start. Recreate idle
+                # servers so imports/deletions also resolve duplicate sources afresh.
+                await server.client.aclose()
+                await self._stop_process(server.process)
+                self._servers.pop(path, None)
             return result
 
     async def events(self, project: str, config: AppConfig) -> AsyncIterator[bytes]:

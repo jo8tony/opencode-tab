@@ -37,9 +37,9 @@ def test_skill_copy_enable_disable_delete_and_restart(tmp_path):
     (source / "references/checklist.md").write_text("source changed")
     assert (installed / "references/checklist.md").read_text() == "checklist"
     store.set_enabled("code-review", False)
-    assert not installed.exists()
-    disabled = root / "skills-disabled/code-review"
-    assert (disabled / "SKILL.md").is_file()
+    assert (installed / "SKILL.md").is_file()
+    assert not (root / "skills-disabled").exists()
+    assert '"code-review": "deny"' in (root / "opencode.jsonc").read_text()
     restarted = SkillStore(root)
     assert restarted.list()["items"][0]["enabled"] is False
     with pytest.raises(FileExistsError):
@@ -124,7 +124,7 @@ def test_copy_failure_keeps_existing_skill_and_cleans_staging(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_refresh_waits_for_idle_and_invalidates_native_cache(tmp_path):
+async def test_refresh_waits_for_idle_and_invalidates_native_cache(tmp_path, monkeypatch):
     manager = WorkspaceManager()
     statuses = {"ses_1": {"type": "busy"}}
     requests = []
@@ -136,6 +136,10 @@ async def test_refresh_waits_for_idle_and_invalidates_native_cache(tmp_path):
     client = httpx.AsyncClient(base_url="http://opencode", transport=httpx.MockTransport(respond))
     manager._servers[str(tmp_path)] = OpenCodeServer(SimpleNamespace(poll=lambda: None), client, 1234)
     changes = []
+    stopped = []
+    async def stop(process):
+        stopped.append(process)
+    monkeypatch.setattr(manager, "_stop_process", stop)
     try:
         with pytest.raises(WorkspaceError) as error:
             await manager.update_skills(lambda: changes.append("changed") or {"ok": True})
@@ -145,7 +149,9 @@ async def test_refresh_waits_for_idle_and_invalidates_native_cache(tmp_path):
         statuses.clear()
         assert await manager.update_skills(lambda: changes.append("changed") or {"ok": True}) == {"ok": True}
         assert changes == ["changed"]
-        assert requests[-1] == ("POST", "/instance/dispose")
+        assert requests[-1] == ("GET", "/session/status")
+        assert stopped and not manager._servers
+        assert client.is_closed
     finally:
         await client.aclose()
 
@@ -229,7 +235,10 @@ def test_management_api_and_native_skill_commands(tmp_path, monkeypatch):
         payload = {"command": "code-review", "arguments": "review my changes", "agent": "plan",
                    "provider_id": "test", "model_id": "model", "variant": "high"}
         assert client.post(command, json=payload).status_code == 200
+        message_id = calls[-1][2]["messageID"]
+        assert message_id.startswith("msg_")
         assert calls[-1] == ("POST", "/session/ses_1/command", {
+            "messageID": message_id,
             "command": "code-review", "arguments": "review my changes", "agent": "plan", "model": "test/model", "variant": "high"})
         assert client.patch(f"{prefix}/skills/code-review", json={"enabled": False}).status_code == 200
         assert client.get(popup).json()["items"] == []
@@ -284,3 +293,181 @@ def test_native_name_collisions_do_not_invoke_another_skill_or_command(tmp_path,
             return  # Windows may not grant symlink creation privileges.
         native["location"] = str(alias / "code-review/SKILL.md")
         assert client.get(popup).json()["items"][0]["name"] == "code-review"
+
+
+def test_external_sources_are_read_in_place_with_app_priority(tmp_path):
+    external = tmp_path / "original/opencode"
+    original = make_skill(external / "skills")
+    nested = make_skill(external / "skill/team", "planning")
+    store = SkillStore(tmp_path / "app", external_root=external)
+    external_items = store.list()["items"]
+    assert {i["name"] for i in external_items} == {"code-review", "planning"}
+    review = next(i for i in external_items if i["name"] == "code-review")
+    assert review["source"] == "external" and not review["deletable"]
+    before = (original / "SKILL.md").read_bytes()
+    store.set_enabled(review["id"], False)
+    assert (original / "SKILL.md").read_bytes() == before
+    assert not (external / "opencode.jsonc").exists()
+    assert not next(i for i in store.list()["items"] if i["id"] == review["id"])["enabled"]
+    with pytest.raises(ValueError, match="只能删除"):
+        store.delete(review["id"])
+    app = store.add(str(original))
+    collision = next(i for i in store.list()["items"] if i["id"] == review["id"])
+    assert collision["conflict"]
+    assert store.external_paths() == [str(nested)]
+    store.delete(app["id"])
+    assert set(store.external_paths()) == {str(original), str(nested)}
+
+
+def test_old_disabled_copy_migrates_once_with_permission(tmp_path):
+    root = tmp_path / "app"
+    old = make_skill(root / "skills-disabled")
+    store = SkillStore(root, external_root=tmp_path / "original")
+    store.migrate()
+    store.migrate()
+    assert not old.exists()
+    assert (root / "skills/code-review/references/checklist.md").is_file()
+    assert store.permission("code-review") == "deny"
+    store.set_enabled("code-review", True)
+    assert (root / "skills/code-review").is_dir()
+    assert store.permission("code-review") == "allow"
+
+
+@pytest.mark.parametrize("content", [
+    '{}', '{"permission":"ask"}', '{"permission":{"skill":"deny"}}',
+    '{// retain root\n "model":"test/model", /* root */}',
+    '{"permission": {/* retain permission */ "skill": {"*": "ask", /* retain skill */}},}',
+])
+def test_official_permission_patch_preserves_other_config(tmp_path, content):
+    from llm_api_proxy_recorder.admin.opencode_config import parse_jsonc
+    root = tmp_path / "app"
+    root.mkdir()
+    config = root / "opencode.jsonc"
+    config.write_text(content)
+    store = SkillStore(root, external_root=tmp_path / "original")
+    store.add(str(make_skill(tmp_path / "user")))
+    store.set_enabled("code-review", False)
+    changed = config.read_text()
+    parsed = parse_jsonc(changed)
+    assert parsed["permission"]["skill"]["code-review"] == "deny"
+    assert parsed.get("model") == parse_jsonc(content).get("model")
+    for comment in ("retain root", "retain permission", "retain skill", "root */"):
+        if comment in content:
+            assert comment in changed
+    store.set_enabled("code-review", True)
+    assert store.permission("code-review") == "allow"
+
+
+def test_manual_skill_annotations_persist_and_do_not_modify_native_parts(tmp_path):
+    root = tmp_path / "app"
+    store = SkillStore(root, external_root=tmp_path / "original")
+    skill = store.add(str(make_skill(tmp_path / "user")))
+    store.record_use("project", "ses_1", "msg_1", skill, "review changes")
+    messages = [{"info": {"id": "msg_1", "role": "user"}, "parts": [{"type": "text", "text": "native expanded content"}]},
+                {"info": {"id": "msg_2", "role": "user"}, "parts": []}]
+    restored = SkillStore(root, external_root=tmp_path / "original").annotate_messages("project", "ses_1", messages)
+    assert restored[0]["skillUse"]["name"] == "code-review"
+    assert restored[0]["skillUse"]["arguments"] == "review changes"
+    assert restored[0]["parts"][0]["text"] == "native expanded content"
+    assert "skillUse" not in restored[1]
+    assert store.annotate_messages("project", "ses_other", [{"info": {"id": "msg_1", "role": "user"}}])[0].get("skillUse") is None
+
+
+def test_agent_specific_skill_denial_blocks_picker_and_command(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("LLMPR_ORIGINAL_XDG_CONFIG_HOME", str(tmp_path / "original"))
+    app = create_app(default_config(), str(tmp_path / "proxy.json"))
+    skill = app.state.runtime.skills.add(str(make_skill(tmp_path / "user")))
+    invoked = []
+    async def request(project, config, method, endpoint, **kwargs):
+        if endpoint == "/command":
+            return [{"name": "code-review", "source": "skill"}]
+        if endpoint == "/skill":
+            return [{"name": "code-review", "location": str(Path(skill["path"]) / "SKILL.md")}]
+        if endpoint == "/agent":
+            return [{"name": "plan", "permission": [{"permission": "skill", "pattern": "*", "action": "allow"},
+                    {"permission": "skill", "pattern": "code-*", "action": "deny"}]}]
+        invoked.append(endpoint)
+        return {"ok": True}
+    app.state.runtime.workspace.request = request
+    project = tmp_path / "project"
+    project.mkdir()
+    with TestClient(app) as client:
+        prefix = "/__recorder/api/workspace/projects"
+        project_id = client.post(prefix, json={"path": str(project)}).json()["id"]
+        assert client.get(f"{prefix}/{project_id}/skills?agent=plan").json()["items"] == []
+        assert client.post(f"{prefix}/{project_id}/sessions/ses_1/command", json={"command":"code-review", "agent":"plan"}).status_code == 409
+        assert not invoked
+
+
+def test_terminal_injects_external_paths_without_provider_changes(tmp_path, monkeypatch):
+    import json
+    from llm_api_proxy_recorder.terminal.manager import _build_env
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "app"))
+    monkeypatch.setenv("LLMPR_ORIGINAL_XDG_CONFIG_HOME", str(tmp_path / "original"))
+    monkeypatch.delenv("OPENCODE_CONFIG_CONTENT", raising=False)
+    external = make_skill(tmp_path / "original/opencode/skills")
+    cfg = default_config()
+    cfg.terminal.route_through_proxy = False
+    inline = json.loads(_build_env(cfg, "opencode")["OPENCODE_CONFIG_CONTENT"])
+    assert inline == {"skills": {"paths": [str(external)]}}
+    assert "OPENCODE_CONFIG_CONTENT" not in _build_env(cfg, "shell")
+
+
+def test_migration_conflict_keeps_both_copies_and_reports_warning(tmp_path):
+    store = SkillStore(tmp_path / "app", external_root=tmp_path / "original")
+    active = make_skill(store.enabled_dir)
+    disabled = make_skill(store.disabled_dir)
+    store.migrate()
+    assert active.is_dir() and disabled.is_dir()
+    assert store.list()["warnings"]
+    assert store.permission("code-review") == "allow"
+
+
+def test_import_config_write_failure_rolls_back_new_copy(tmp_path, monkeypatch):
+    store = SkillStore(tmp_path / "app", external_root=tmp_path / "original")
+    def fail(*_args):
+        raise OSError("config write failed")
+    monkeypatch.setattr(store, "_permission", fail)
+    with pytest.raises(OSError):
+        store.add(str(make_skill(tmp_path / "user")))
+    assert store.list()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_skill_changes_are_blocked_during_command_preflight():
+    manager = WorkspaceManager()
+    async with manager.task_dispatch():
+        with pytest.raises(WorkspaceError) as error:
+            await manager.update_skills(lambda: pytest.fail("must not mutate during preflight"))
+        assert error.value.status == 409
+    assert manager._task_requests == 0
+
+
+def test_project_native_skills_keep_selection_and_manual_history(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("LLMPR_ORIGINAL_XDG_CONFIG_HOME", str(tmp_path / "original"))
+    app = create_app(default_config(), str(tmp_path / "proxy.json"))
+    skill = make_skill(tmp_path / "project/.opencode/skills", "project-review")
+    calls = []
+    async def request(project, config, method, endpoint, *, body=None, **kwargs):
+        if endpoint == "/command":
+            return [{"name": "project-review", "source": "skill"}]
+        if endpoint == "/skill":
+            return [{"name":"project-review", "description":"Project review", "location":str(skill / "SKILL.md")}]
+        if endpoint == "/agent":
+            return []
+        calls.append(body)
+        return {"ok":True}
+    app.state.runtime.workspace.request = request
+    with TestClient(app) as client:
+        prefix = "/__recorder/api/workspace/projects"
+        project_id = client.post(prefix,json={"path":str(tmp_path / "project")}).json()["id"]
+        popup = client.get(f"{prefix}/{project_id}/skills").json()
+        assert popup["items"][0]["name"] == "project-review"
+        endpoint = f"{prefix}/{project_id}/sessions/ses_1/command"
+        assert client.post(endpoint,json={"command":"project-review"}).status_code == 200
+        assert calls[-1]["messageID"].startswith("msg_")
+        app.state.runtime.skills._permission("project-review", False)
+        assert client.get(f"{prefix}/{project_id}/skills").json()["items"] == []
+        assert client.post(endpoint,json={"command":"project-review"}).status_code == 409

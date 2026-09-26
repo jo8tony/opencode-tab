@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import fnmatch
+import hashlib
+import json
+import os
 import re
 import shutil
 import tempfile
@@ -10,7 +14,9 @@ from pathlib import Path
 
 import yaml
 
-from llm_api_proxy_recorder.admin.opencode_config import isolated_config_dir
+from llm_api_proxy_recorder.admin.opencode_config import (
+    CONFIG_LOCK, isolated_config_dir, import_source_dirs, parse_jsonc, patch_jsonc, write_global_config,
+)
 
 SKILL_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 WORKSPACE_COMMANDS = {
@@ -49,59 +55,120 @@ def read_skill(path: Path) -> dict:
 
 
 class SkillStore:
-    """Enabled skills are discoverable; disabled copies stay outside scan roots."""
+    """App copies and read-only external sources, using native skill permissions."""
 
-    def __init__(self, root: Path | None = None):
+    def __init__(self, root: Path | None = None, external_root: Path | None = None):
         self.root = (root or isolated_config_dir()).expanduser().resolve()
         self.enabled_dir = self.root / "skills"
         self.disabled_dir = self.root / "skills-disabled"
+        self.external_root = (external_root or import_source_dirs()[0]).expanduser().resolve()
         self._lock = threading.RLock()
+        self.migration_warnings: list[str] = []
+
+    def _config(self) -> tuple[Path, str, dict]:
+        path = next((self.root / name for name in ("opencode.jsonc", "opencode.json")
+                     if (self.root / name).exists()), self.root / "opencode.jsonc")
+        content = path.read_bytes().decode("utf-8") if path.exists() else "{}\n"
+        return path, content, parse_jsonc(content)
+
+    def permission(self, name: str) -> str:
+        _, _, config = self._config()
+        permission = config.get("permission", {})
+        rules = permission.get("skill", permission.get("*", "allow")) if isinstance(permission, dict) else permission
+        if isinstance(rules, str):
+            return rules
+        if not isinstance(rules, dict):
+            raise ValueError("OpenCode 的 permission.skill 配置无效")
+        action = permission.get("*", "allow") if isinstance(permission, dict) else "allow"
+        for pattern, value in rules.items():
+            if fnmatch.fnmatchcase(name, pattern):
+                action = value
+        return action
+
+    def _permission(self, name: str, enabled: bool) -> None:
+        with CONFIG_LOCK:
+            path, content, _ = self._config()
+            changed = patch_jsonc(content, ["permission", "skill", name], "allow" if enabled else "deny")
+            validate = parse_jsonc(changed)
+            if validate["permission"]["skill"][name] != ("allow" if enabled else "deny"):
+                raise ValueError("技能权限配置写入失败")
+            write_global_config(path, changed)
 
     def _prepare(self) -> None:
-        for directory in (self.enabled_dir, self.disabled_dir):
-            if directory.is_symlink():
-                raise ValueError("应用技能存放目录不能是符号链接")
-            directory.mkdir(parents=True, exist_ok=True)
+        if self.enabled_dir.is_symlink() or self.disabled_dir.is_symlink():
+            raise ValueError("应用技能存放目录不能是符号链接")
+        self.enabled_dir.mkdir(parents=True, exist_ok=True)
+
+    def migrate(self) -> None:
+        """Run before starting workspace servers; interrupted migrations are retryable."""
+        with self._lock:
+            self._prepare()
+            self.migration_warnings = []
+            if not self.disabled_dir.is_dir():
+                return
+            for path in sorted(self.disabled_dir.iterdir()):
+                if path.is_symlink() or not path.is_dir():
+                    continue
+                try:
+                    name = read_skill(path)["name"]
+                except (OSError, ValueError) as exc:
+                    self.migration_warnings.append(f"旧停用技能 {path.name} 无法迁移：{exc}")
+                    continue
+                destination = self.enabled_dir / name
+                if destination.exists():
+                    self.migration_warnings.append(f"旧停用技能 {name} 与应用技能重名，已保留旧副本，请处理冲突")
+                    continue
+                self._permission(name, False)
+                path.rename(destination)
+            if not any(self.disabled_dir.iterdir()):
+                self.disabled_dir.rmdir()
 
     def list(self) -> dict:
         with self._lock:
             self._prepare()
             items = []
-            for directory, enabled in ((self.enabled_dir, True), (self.disabled_dir, False)):
-                for path in sorted(directory.iterdir()):
-                    if not path.is_dir() or path.is_symlink():
+            roots = [(self.enabled_dir, "app"), (self.root / "skill", "app")]
+            if self.external_root != self.root:
+                roots.extend((self.external_root / folder, "external") for folder in ("skills", "skill"))
+            for directory, source in roots:
+                if not directory.is_dir() or directory.is_symlink():
+                    continue
+                for folder, dirs, files in os.walk(directory, followlinks=False):
+                    dirs[:] = sorted(d for d in dirs if not (Path(folder) / d).is_symlink())
+                    path = Path(folder)
+                    if "SKILL.md" not in files or (path / "SKILL.md").is_symlink():
                         continue
-                    try:
-                        _safe_name(path.name)
-                    except ValueError:
-                        continue
-                    item = {"id": path.name, "path": str(path), "enabled": enabled}
+                    managed = source == "app" and path.parent == self.enabled_dir
+                    item = {"id": path.name if managed else "ext_" + hashlib.sha256(str(path).encode()).hexdigest()[:24],
+                            "path": str(path), "source": source, "deletable": managed}
                     try:
                         item.update(read_skill(path))
                     except (OSError, ValueError) as exc:
                         item.update(name=path.name, description="", error=str(exc))
+                    item["permission"] = self.permission(item["name"])
+                    item["enabled"] = item["permission"] != "deny"
                     items.append(item)
-            return {
-                "items": sorted(items, key=lambda item: item["name"]),
-                "directory": str(self.enabled_dir), "total": len(items),
-            }
+            seen = set()
+            for item in items:
+                if item["name"] in seen:
+                    item["conflict"] = "同名技能已由优先来源提供"
+                else:
+                    seen.add(item["name"])
+            return {"items": sorted(items, key=lambda item: (item["name"], item["source"])),
+                    "directory": str(self.enabled_dir), "external_directory": str(self.external_root), "total": len(items),
+                    "warnings": list(self.migration_warnings)}
 
-    def _find(self, name: str) -> tuple[Path, bool]:
-        _safe_name(name)
-        self._prepare()
-        matches = [
-            (directory / name, enabled)
-            for directory, enabled in ((self.enabled_dir, True), (self.disabled_dir, False))
-            if (directory / name).exists() or (directory / name).is_symlink()
-        ]
-        if len(matches) > 1:
-            raise FileExistsError("启用和停用目录中存在同名技能，请先处理目录冲突")
-        if not matches:
+    def external_paths(self) -> list[str]:
+        return [item["path"] for item in self.list()["items"]
+                if item["source"] == "external" and not item.get("error") and not item.get("conflict")]
+
+    def _find(self, skill_id: str) -> dict:
+        if not skill_id.startswith("ext_"):
+            _safe_name(skill_id)
+        item = next((item for item in self.list()["items"] if item["id"] == skill_id), None)
+        if item is None:
             raise FileNotFoundError("技能不存在")
-        path, enabled = matches[0]
-        if path.is_symlink() or not path.is_dir():
-            raise ValueError("技能目录无效或是符号链接")
-        return path, enabled
+        return item
 
     def add(self, source: str) -> dict:
         with self._lock:
@@ -125,7 +192,7 @@ class SkillStore:
             name = metadata["name"]
             if name in WORKSPACE_COMMANDS:
                 raise ValueError("技能名称与工作区快捷命令重名，请修改技能 name")
-            if any(item["name"] == name or item["id"] == name for item in self.list()["items"]):
+            if any((item["name"] == name or item["id"] == name) and item["source"] == "app" for item in self.list()["items"]):
                 raise FileExistsError("已存在同名技能，请先删除旧副本")
             destination = self.enabled_dir / name
             # Stage outside both scan roots so OpenCode never discovers a partial copy.
@@ -139,22 +206,48 @@ class SkillStore:
                 if destination.exists() or (self.disabled_dir / name).exists():
                     raise FileExistsError("已存在同名技能")
                 staging.rename(destination)
-            return {"id": name, **metadata, "path": str(destination), "enabled": True}
+            try:
+                self._permission(name, True)
+            except (OSError, ValueError):
+                shutil.rmtree(destination)
+                raise
+            return {"id": name, **metadata, "path": str(destination), "enabled": True, "source": "app"}
 
-    def set_enabled(self, name: str, enabled: bool) -> dict:
+    def set_enabled(self, skill_id: str, enabled: bool) -> dict:
         with self._lock:
-            path, current = self._find(name)
+            item = self._find(skill_id)
+            if item.get("conflict"):
+                raise ValueError("同名技能的权限由优先来源控制")
             if enabled:
-                metadata = read_skill(path)
-                if metadata["name"] != name:
-                    raise ValueError("技能 name 必须与目录名称一致")
-            if current != enabled:
-                destination = (self.enabled_dir if enabled else self.disabled_dir) / name
-                path.rename(destination)
-            return {"ok": True, "id": name, "enabled": enabled}
+                read_skill(Path(item["path"]))
+            self._permission(item["name"], enabled)
+            return {"ok": True, "id": skill_id, "enabled": enabled}
 
-    def delete(self, name: str) -> dict:
+    def delete(self, skill_id: str) -> dict:
         with self._lock:
-            path, _ = self._find(name)
-            shutil.rmtree(path)
-            return {"ok": True, "id": name}
+            item = self._find(skill_id)
+            if not item["deletable"]:
+                raise ValueError("只能删除通过本应用导入的技能副本")
+            shutil.rmtree(item["path"])
+            return {"ok": True, "id": skill_id}
+
+    def record_use(self, project: str, session: str, message_id: str, skill: dict, arguments: str) -> None:
+        with self._lock:
+            path = self._uses_path(project, session)
+            uses = json.loads(path.read_text()) if path.exists() else {}
+            uses[message_id] = {"name": skill["name"], "path": skill["path"], "arguments": arguments}
+            write_global_config(path, json.dumps(uses, ensure_ascii=False))
+
+    def _uses_path(self, project: str, session: str) -> Path:
+        key = hashlib.sha256((project + "\0" + session).encode()).hexdigest()
+        return self.root / ".skill-uses" / (key + ".json")
+
+    def annotate_messages(self, project: str, session: str, messages: list) -> list:
+        with self._lock:
+            path = self._uses_path(project, session)
+            uses = json.loads(path.read_text()) if path.exists() else {}
+            for message in messages:
+                info = message.get("info", {})
+                if info.get("role") == "user" and info.get("id") in uses:
+                    message["skillUse"] = uses[info["id"]]
+            return messages

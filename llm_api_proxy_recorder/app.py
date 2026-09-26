@@ -99,6 +99,7 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        await asyncio.to_thread(runtime.skills.migrate)
         # 启动即执行一次保留清理，此后每小时一次；失败不影响服务
         await _retention_sweep(runtime)
 

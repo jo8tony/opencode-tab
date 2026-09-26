@@ -343,6 +343,24 @@ def _build_env(cfg: AppConfig, kind: str) -> dict[str, str]:
     if kind == "opencode":
         # 随应用发布的 OpenCode 必须由应用升级，禁止子进程自行替换版本。
         env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
+    if kind == "opencode":
+        from llm_api_proxy_recorder.admin.skills import SkillStore
+        store = SkillStore()
+        try:
+            inline = json.loads(env.get("OPENCODE_CONFIG_CONTENT") or "{}")
+            if not isinstance(inline, dict):
+                inline = {}
+        except ValueError:
+            inline = {}
+        external_paths = store.external_paths()
+        skills = inline.get("skills")
+        if not isinstance(skills, dict):
+            skills = {}
+        paths = skills.get("paths", [])
+        skills["paths"] = list(dict.fromkeys([*(paths if isinstance(paths, list) else []), *external_paths]))
+        if external_paths:
+            inline["skills"] = skills
+            env["OPENCODE_CONFIG_CONTENT"] = json.dumps(inline, ensure_ascii=False)
     for key in list(env):
         if key in (BUNDLED_OPENCODE_ENV, "LLMPR_DESKTOP_INSTANCE_ID") or key.startswith(
             ORIGINAL_XDG_PREFIX
