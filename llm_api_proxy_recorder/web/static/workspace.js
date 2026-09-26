@@ -17,6 +17,8 @@ function renderWorkspace(view) {
   let fileMatches = [];
   let fileMentionRange = null;
   let lastSessionListRefresh = 0;
+  let followLatest = true;
+  let scrollToLatestOnLoad = true;
   const state = {
     projects: [], sessions: new Map(), sessionDetails: new Map(), errors: new Map(),
     projectId: workspaceSelection.projectId, sessionId: workspaceSelection.sessionId,
@@ -90,6 +92,18 @@ function renderWorkspace(view) {
     clearInterval(poll);
   });
 
+  scroll.addEventListener("scroll", () => {
+    followLatest = scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop <= 80;
+  }, { passive: true });
+  if (typeof ResizeObserver !== "undefined") {
+    const resizeObserver = new ResizeObserver(() => {
+      if (alive() && state.tab === "chat" && followLatest) scroll.scrollTop = scroll.scrollHeight;
+    });
+    resizeObserver.observe(content);
+    resizeObserver.observe(scroll);
+    addCleanup(() => resizeObserver.disconnect());
+  }
+
   function activeProject() { return state.projects.find((item) => item.id === state.projectId); }
   function activeSession() {
     return state.sessionDetails.get(state.sessionId) ||
@@ -141,6 +155,71 @@ function renderWorkspace(view) {
     }
     return icon;
   }
+  async function copyMessageText(text) {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const previousFocus = document.activeElement;
+        const field = el("textarea", { class: "wsp-clipboard-field", "aria-label": "复制消息", text });
+        document.body.append(field);
+        try {
+          field.select();
+          if (!document.execCommand("copy")) throw new Error("浏览器未允许复制");
+        } finally { field.remove(); previousFocus?.focus(); }
+      }
+      toast("已复制消息");
+    } catch (error) { toast("复制失败：" + detail(error), "error"); }
+  }
+
+  function messageActions(message) {
+    const projectId = state.projectId;
+    const sessionId = state.sessionId;
+    const info = message.modelInfo || message.info || {};
+    const actions = el("div", { class: "wsp-message-actions" });
+    const text = (message.parts || []).filter((part) => part.type === "text" && !part.synthetic)
+      .map((part) => part.text || "").join("\n\n");
+    function actionButton(label, path, handler) {
+      return el("button", { class: "wsp-message-action", type: "button", title: label, "aria-label": label, onclick: handler },
+        el("svg", { viewBox: "0 0 24 24", width: 18, height: 18, fill: "none", stroke: "currentColor", "stroke-width": 1.7, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, el("path", { d: path })));
+    }
+    const copy = actionButton("复制消息", "M8 8h11v13H8z M16 8V3H3v13h5", () => copyMessageText(text));
+    copy.disabled = !text;
+    actions.append(copy);
+    if (info.role === "assistant") {
+      const fork = actionButton("在新对话中分支", "M6 7v10m0-5h8a4 4 0 0 0 4-4V7 M8 5a2 2 0 1 1-4 0 2 2 0 0 1 4 0 M8 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0 M20 5a2 2 0 1 1-4 0 2 2 0 0 1 4 0", async () => {
+        if (fork.disabled) return;
+        fork.disabled = true;
+        try {
+          const session = await api(`${sessionPath(projectId, sessionId)}/fork`, {
+            method: "POST", body: { message_id: info.id }, silent: true,
+          });
+          if (!alive()) return;
+          if (!session?.id) throw new Error("未返回分支会话 ID");
+          const items = state.sessions.get(projectId) || [];
+          state.sessions.set(projectId, [session, ...items.filter((item) => item.id !== session.id)]);
+          selectSession(projectId, session.id);
+          input.focus();
+          toast("已创建会话分支");
+        } catch (error) { toast("创建分支失败：" + detail(error), "error"); }
+        finally { fork.disabled = !info.id; }
+      });
+      fork.disabled = !info.id;
+      actions.append(fork);
+    }
+    const created = message.info?.time?.created;
+    const date = created != null ? new Date(created) : null;
+    if (date && Number.isFinite(date.getTime())) {
+      const label = date.toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+      const metadata = el("span", { class: "wsp-message-time", text: label, title: label });
+      const completed = info.time?.completed;
+      const duration = completed != null ? (new Date(completed) - date) / 1000 : null;
+      if (info.role === "assistant" && Number.isFinite(duration) && duration >= 0) metadata.append(` · 用时 ${duration.toFixed(1)} 秒`);
+      actions.append(metadata);
+    }
+    return actions;
+  }
+
   function messageDay(message) {
     const date = new Date(message?.info?.time?.created || message?.info?.time?.updated || Date.now());
     if (Number.isNaN(date.getTime())) return "今天";
@@ -808,7 +887,8 @@ function renderWorkspace(view) {
         }
       }
       flushTools();
-      row.append(body);
+      const column = el("div", { class: "wsp-message-column" }, body, messageActions(message));
+      row.append(column);
       content.append(row);
     }
     if (state.compactingSessionId === state.sessionId && !state.messages.some((message) =>
@@ -1006,10 +1086,11 @@ function renderWorkspace(view) {
     }
   }
 
-  function renderMain() {
+  function renderMain(forceBottom = false) {
     const previousTop = scroll.scrollTop;
     const previousMaximum = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
-    const nearBottom = previousTop > 0 && previousMaximum > 0 && previousMaximum - previousTop < Math.min(80, previousMaximum / 3);
+    const nearBottom = previousMaximum - previousTop <= 80;
+    const stickToBottom = state.tab === "chat" && (forceBottom || nearBottom);
     const active = document.activeElement;
     const editingQuestion = active?.classList?.contains("wsp-question-custom")
       ? { id: active.dataset.requestId, index: active.dataset.questionIndex,
@@ -1020,7 +1101,16 @@ function renderWorkspace(view) {
     if (state.tab === "activity") renderActivity();
     if (state.tab === "tasks") renderTasks();
     renderStatsLine();
-    scroll.scrollTop = nearBottom ? scroll.scrollHeight : previousTop;
+    followLatest = stickToBottom;
+    scroll.scrollTop = stickToBottom ? scroll.scrollHeight : previousTop;
+    if (stickToBottom) {
+      const sessionId = state.sessionId;
+      requestAnimationFrame(() => {
+        if (alive() && state.sessionId === sessionId && state.tab === "chat" && followLatest) {
+          scroll.scrollTop = scroll.scrollHeight;
+        }
+      });
+    }
     if (editingQuestion) {
       const restored = Array.from(content.querySelectorAll(".wsp-question-custom")).find((field) =>
         field.dataset.requestId === editingQuestion.id && field.dataset.questionIndex === editingQuestion.index);
@@ -1043,6 +1133,7 @@ function renderWorkspace(view) {
       if (state.projectId === project.id && !items.some((item) => item.id === state.sessionId) &&
           !state.sessionDetails.has(state.sessionId)) {
         state.sessionId = items[0]?.id || null;
+        scrollToLatestOnLoad = true;
         workspaceSelection.sessionId = state.sessionId;
         refreshSelected();
       }
@@ -1529,7 +1620,10 @@ function renderWorkspace(view) {
       }
       if (session.status === "fulfilled" && session.value?.id) state.sessionDetails.set(session.value.id, session.value);
       if (messages.status === "rejected") content.replaceChildren(el("div", { class: "wsp-error", text: detail(messages.reason) }));
-      else renderMain();
+      else {
+        renderMain(scrollToLatestOnLoad);
+        scrollToLatestOnLoad = false;
+      }
       renderHeader();
     } finally {
       refreshing = false;
@@ -1539,6 +1633,7 @@ function renderWorkspace(view) {
 
   function selectProject(projectId) {
     hideAutocomplete();
+    scrollToLatestOnLoad = true;
     state.projectId = projectId;
     state.attachments = [];
     state.fileReferences = [];
@@ -1567,6 +1662,7 @@ function renderWorkspace(view) {
 
   function selectSession(projectId, sessionId) {
     hideAutocomplete();
+    scrollToLatestOnLoad = true;
     state.projectId = projectId;
     state.attachments = [];
     state.fileReferences = [];
@@ -1798,7 +1894,7 @@ function renderWorkspace(view) {
   view.querySelectorAll(".wsp-tab").forEach((button) => button.addEventListener("click", () => {
     state.tab = button.dataset.wspTab;
     scroll.scrollTop = 0;
-    renderHeader(); renderMain();
+    renderHeader(); renderMain(state.tab === "chat");
     if (state.tab === "changes" || state.tab === "tasks") refreshSelected();
   }));
   view.querySelector("#wsp-form").addEventListener("submit", async (event) => {

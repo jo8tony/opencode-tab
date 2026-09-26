@@ -175,8 +175,20 @@ class ForkSessionBody(BaseModel):
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/fork")
 async def fork_session(project_id: str, session_id: str, body: ForkSessionBody, request: Request):
     path = _project_path(request, project_id)
-    payload = {"messageID": _safe_id(body.message_id)} if body.message_id else {}
-    return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/fork", payload)
+    session = _safe_id(session_id)
+    payload = {}
+    if body.message_id:
+        message_id = _safe_id(body.message_id)
+        messages = await _opencode(request, path, "GET", f"/session/{session}/message")
+        index = next((i for i, message in enumerate(messages)
+                      if message.get("info", {}).get("id") == message_id), None)
+        if index is None:
+            raise HTTPException(status_code=404, detail="分支消息不存在")
+        # OpenCode excludes the boundary message. Use the next message to retain
+        # the selected reply; omitting the boundary retains the final reply.
+        if index + 1 < len(messages):
+            payload["messageID"] = _safe_id(messages[index + 1]["info"]["id"])
+    return await _opencode(request, path, "POST", f"/session/{session}/fork", payload)
 
 
 @router.get("/workspace/projects/{project_id}/sessions/{session_id}/children")

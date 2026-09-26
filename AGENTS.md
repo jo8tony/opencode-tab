@@ -6,6 +6,16 @@
 
 The desktop shell is split across `src-tauri/` (Rust/Tauri), `desktop/` (startup page), `packaging/` (PyInstaller spec), and `scripts/` (platform build helpers). Generated data belongs in `.runtime/`; build outputs under `build/`, `dist/`, and `src-tauri/target/` must remain untracked.
 
+## OpenCode Integration & API Compatibility
+
+The workspace uses the OpenCode V1 `opencode serve` HTTP API, not the V2 API documented at https://opencode.ai/v2/docs/api. `llm_api_proxy_recorder/workspace/manager.py` starts one local subprocess per project on demand with `opencode serve --hostname 127.0.0.1 --port <random-port>`. Each server uses a randomly generated HTTP Basic password. The browser calls this application's FastAPI workspace routes; the backend forwards requests with `httpx` and relays SSE from `/event`. OpenCode owns conversation persistence.
+
+Current API paths include `/global/health`, `/session`, `/agent`, `/config/providers`, and `/session/{id}/prompt_async`. V2 uses paths such as `/api/info`, `/api/session`, and `/api/agent`, and is not a drop-in replacement. A V2 migration must adapt endpoints, request/response structures, and event formats, with compatibility coverage; do not assume replacing the executable or adding an `/api` prefix is sufficient. Treat the running version's `/doc` OpenAPI description as the API contract.
+
+The Windows installer bundles a pinned OpenCode CLI version from `packaging/opencode.json` (currently `1.18.32`). macOS normally resolves OpenCode from PATH; settings also support a custom command. The workspace still expects V1 API behavior regardless of executable source. Keep version-specific assumptions aligned with the packaging manifest and verify compatibility when upgrading.
+
+The separate OpenCode terminal runs the native TUI through Windows ConPTY or macOS system PTY, with xterm.js and WebSocket transporting terminal input/output. Both workspace and terminal processes share environment setup in `terminal/manager.py`: proxy mode injects provider `baseURL` through `OPENCODE_CONFIG_CONTENT` to route model requests through this application's recorder without editing the project's `opencode.json`; original-config mode skips this proxy injection.
+
 ## Build, Test, and Development Commands
 
 - `python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"` installs the Python app and test dependencies.

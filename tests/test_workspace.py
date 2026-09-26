@@ -2,6 +2,8 @@
 
 import base64
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from llm_api_proxy_recorder.app import create_app
@@ -43,7 +45,7 @@ def test_workspace_projects_and_session_routes(tmp_path):
         if endpoint == "/session" and method == "POST":
             return {"id": "ses_new", "title": body.get("title")}
         if endpoint.endswith("/message"):
-            return [{"info": {"role": "user"}, "parts": [{"type": "text", "text": "hello"}]}]
+            return [{"info": {"id": "msg_1", "role": "user"}, "parts": [{"type": "text", "text": "hello"}]}]
         if endpoint == "/agent":
             return [{"name": "build", "mode": "primary"}]
         if endpoint == "/command":
@@ -92,7 +94,7 @@ def test_workspace_projects_and_session_routes(tmp_path):
         assert client.patch(f"{prefix}/projects/{project_id}/sessions/ses_123", json={"title": "renamed"}).status_code == 200
         assert calls[-1][1:] == ("PATCH", "/session/ses_123", {"title": "renamed"})
         assert client.post(f"{prefix}/projects/{project_id}/sessions/ses_123/fork", json={"message_id": "msg_1"}).status_code == 200
-        assert calls[-1][1:] == ("POST", "/session/ses_123/fork", {"messageID": "msg_1"})
+        assert calls[-1][1:] == ("POST", "/session/ses_123/fork", {})
         assert client.get(f"{prefix}/projects/{project_id}/sessions/ses_123/todo").status_code == 200
         assert calls[-1][2] == "/session/ses_123/todo"
         assert client.get(f"{prefix}/projects/{project_id}/sessions/ses_123/children").status_code == 200
@@ -181,3 +183,48 @@ def test_workspace_projects_and_session_routes(tmp_path):
         assert calls[-1][1:3] == ("DELETE", "/session/ses_123")
         assert client.delete(f"{prefix}/projects/{project_id}").json() == {"ok": True}
         assert client.get(f"{prefix}/projects").json()["items"] == []
+
+
+@pytest.mark.parametrize("message_id, expected_ids, boundary", [
+    ("msg_2", ["msg_1", "msg_2"], "msg_3"),
+    ("msg_4", ["msg_1", "msg_2", "msg_3", "msg_4"], None),
+    (None, ["msg_1", "msg_2", "msg_3", "msg_4"], None),
+])
+def test_message_fork_includes_selected_reply(tmp_path, message_id, expected_ids, boundary):
+    config = AppConfig(
+        upstreams=[UpstreamConfig(name="main", base_url="http://127.0.0.1:9001")],
+        default_upstream="main",
+    )
+    app = create_app(config, config_path=str(tmp_path / "config.json"))
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    app.state.runtime.terminal_projects.add(str(project_dir), "opencode")
+    messages = [{"info": {"id": f"msg_{i}", "role": "user" if i % 2 else "assistant"}}
+                for i in range(1, 5)]
+    fork_payloads = []
+
+    async def fake_request(project, cfg, method, endpoint, *, body=None, params=None):
+        if method == "GET" and endpoint.endswith("/message"):
+            return messages
+        if method == "POST" and endpoint.endswith("/fork"):
+            fork_payloads.append(body)
+            # Match OpenCode's exclusive boundary semantics.
+            cutoff = next((i for i, item in enumerate(messages)
+                           if item["info"]["id"] == body.get("messageID")), len(messages))
+            return {"id": "ses_fork", "messages": messages[:cutoff]}
+        raise AssertionError((method, endpoint))
+
+    app.state.runtime.workspace.request = fake_request
+    with TestClient(app) as client:
+        project_id = client.get("/__recorder/api/workspace/projects").json()["items"][0]["id"]
+        endpoint = f"/__recorder/api/workspace/projects/{project_id}/sessions/ses_original/fork"
+        response = client.post(endpoint, json={"message_id": message_id})
+        assert response.status_code == 200
+        assert [item["info"]["id"] for item in response.json()["messages"]] == expected_ids
+        assert fork_payloads == ([{"messageID": boundary}] if boundary else [{}])
+        assert len(messages) == 4
+        missing = client.post(endpoint, json={"message_id": "msg_missing"})
+        assert missing.status_code == 404
+        invalid = client.post(endpoint, json={"message_id": "bad.id"})
+        assert invalid.status_code == 400
+        assert len(fork_payloads) == 1
