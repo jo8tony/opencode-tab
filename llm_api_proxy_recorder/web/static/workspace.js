@@ -2193,6 +2193,13 @@ function renderWorkspace(view) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Escape") { hideAutocomplete(); return; }
     const composing = composingInput || event.isComposing || event.keyCode === 229;
+    if (!composing && event.key === "Backspace" && !event.metaKey && !event.ctrlKey && !event.altKey &&
+        composer.deleteMentionBackward()) {
+      event.preventDefault();
+      updateSkillInput();
+      hideAutocomplete();
+      return;
+    }
     if (!composing && !commandMenu.hidden && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       const count = commandMenu.querySelectorAll(".wsp-command-option").length;
       if (count) {

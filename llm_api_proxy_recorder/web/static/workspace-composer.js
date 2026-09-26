@@ -123,6 +123,30 @@ function createWorkspaceComposer(input, createMention, createFileMention) {
     }
   }
 
+  function deleteMentionBackward() {
+    const selection = window.getSelection();
+    const offsets = selectionOffsets();
+    if (!selection?.isCollapsed || !offsets) return false;
+    const caret = offsets.anchor;
+    const text = value();
+    for (const mention of Array.from(input.querySelectorAll("[data-mention-text]")).reverse()) {
+      const index = Array.prototype.indexOf.call(mention.parentNode.childNodes, mention);
+      const start = offsetAt(mention.parentNode, index);
+      const end = start + mention.dataset.mentionText.length;
+      // Include the single separator inserted after picking a reference.
+      if (caret !== end && !(caret === end + 1 && text.slice(end, caret) === " ")) continue;
+      const range = document.createRange();
+      range.selectNode(mention);
+      const point = pointAt(caret);
+      range.setEnd(point[0], point[1]);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.execCommand("delete");
+      return !input.contains(mention);
+    }
+    return false;
+  }
+
   // Copy native slash syntax so pasted mentions can be recognized again.
   function copySelection(event) {
     const selection = selectionOffsets();
@@ -151,6 +175,7 @@ function createWorkspaceComposer(input, createMention, createFileMention) {
     insertFileReference,
     isFileReferenceAt,
     clearFileReferences,
+    deleteMentionBackward,
     get fileReferences() {
       return [...new Set(Array.from(input.querySelectorAll("[data-file-path]"), mention => mention.dataset.filePath))]
         .map(path => ({ path }));
