@@ -50,7 +50,12 @@ def catalog_revision(cfg: AppConfig) -> str:
 
 
 def catalog_view(cfg: AppConfig) -> dict:
+    """Editable catalog with saved keys; general settings remain redacted."""
     data = public_config(cfg)
+    for provider, upstream in zip(data["upstreams"], cfg.upstreams):
+        provider["api_key"] = upstream.api_key
+        for model, configured in zip(provider["models"], upstream.models):
+            model["api_key"] = configured.api_key
     return {"revision": catalog_revision(cfg), "providers": data["upstreams"],
             "default_upstream": cfg.default_upstream, **data["model_settings"]}
 

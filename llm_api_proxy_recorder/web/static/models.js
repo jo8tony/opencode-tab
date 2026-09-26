@@ -45,24 +45,24 @@ async function renderModels(view) {
   function keyControl(obj, provider) {
     const status = el("small", { class: "f-hint" });
     const refresh = () => {
-      const own = obj.api_key !== undefined ? Boolean(obj.api_key) : obj.has_api_key;
-      const inherited = provider && (provider.api_key !== undefined ? Boolean(provider.api_key) : provider.has_api_key);
-      status.textContent = own ? (obj.api_key !== undefined ? "已填写新 Key，待保存" : "Key 已保存（安全隐藏）") :
-        inherited ? "继承提供商 Key" : obj.api_key === "" ? "保存后清除 Key" : "未配置 Key";
+      const own = Boolean(obj.api_key);
+      const inherited = provider && Boolean(provider.api_key);
+      status.textContent = own ? "已配置 Key" : inherited ? "继承提供商 Key" : "未配置 Key";
     };
-    const input = el("input", { type: "password", autocomplete: "new-password", placeholder: "输入新 Key；留空保留已有 Key" });
+    const input = el("input", { type: "password", autocomplete: "new-password",
+      placeholder: provider ? "留空继承提供商 Key" : "输入 API Key" });
     input.value = obj.api_key || "";
     input.addEventListener("input", () => {
-      if (input.value) obj.api_key = input.value;
-      else delete obj.api_key;
+      obj.api_key = input.value;
       keyRefreshers.forEach((fn) => fn()); changed();
     });
     const clear = el("button", { type: "button", class: "btn btn-xs", text: "清除", onclick: () => {
       obj.api_key = ""; input.value = ""; keyRefreshers.forEach((fn) => fn()); changed();
     } });
-    const show = el("button", { type: "button", class: "btn btn-xs", text: "显示", onclick: () => {
+    const show = el("button", { type: "button", class: "btn btn-xs", text: "显示", "aria-pressed": "false", onclick: () => {
       input.type = input.type === "password" ? "text" : "password";
       show.textContent = input.type === "password" ? "显示" : "隐藏";
+      show.setAttribute("aria-pressed", String(input.type === "text"));
     } });
     keyRefreshers.push(refresh);
     refresh();

@@ -30,8 +30,11 @@ def test_catalog_keys_revision_and_partial_settings(cfg, tmp_path):
     with TestClient(app) as client:
         url = "/__recorder/api/models/config"
         original = client.get(url).json()
-        assert "provider-secret" not in json.dumps(original)
-        assert "model-secret" not in client.get("/__recorder/api/settings").text
+        assert original["providers"][0]["api_key"] == "provider-secret"
+        assert original["providers"][0]["models"][0]["api_key"] == "model-secret"
+        assert original["providers"][0]["models"][1]["api_key"] == ""
+        settings = client.get("/__recorder/api/settings").text
+        assert "provider-secret" not in settings and "model-secret" not in settings
         assert original["providers"][0]["models"][0]["key_source"] == "model"
         original["providers"][0]["display_name"] = "公司"
         original["default_model"] = {"provider": "company", "model": "two"}
@@ -39,6 +42,8 @@ def test_catalog_keys_revision_and_partial_settings(cfg, tmp_path):
         assert response.status_code == 200, response.text
         saved = response.json()
         assert saved["revision"] != original["revision"]
+        assert saved["providers"][0]["api_key"] == "provider-secret"
+        assert saved["providers"][0]["models"][0]["api_key"] == "model-secret"
         assert app.state.runtime.config.upstreams[0].models[0].api_key == "model-secret"
         assert client.put(url, json=original).status_code == 409
         assert client.put("/__recorder/api/settings", json={"outbound": {"proxy_url": ""}}).status_code == 200
@@ -46,10 +51,13 @@ def test_catalog_keys_revision_and_partial_settings(cfg, tmp_path):
         saved["providers"][0]["models"][0]["api_key"] = ""
         cleared = client.put(url, json=saved)
         assert cleared.status_code == 200
+        assert cleared.json()["providers"][0]["models"][0]["api_key"] == ""
         assert cleared.json()["providers"][0]["models"][0]["key_source"] == "provider"
         cleared = cleared.json()
         cleared["providers"][0]["api_key"] = ""
-        assert client.put(url, json=cleared).json()["providers"][0]["models"][0]["key_source"] == "none"
+        result = client.put(url, json=cleared).json()
+        assert result["providers"][0]["api_key"] == ""
+        assert result["providers"][0]["models"][0]["key_source"] == "none"
         assert path.exists()
 
 
@@ -254,7 +262,8 @@ def test_provider_key_replacement_persists_and_inherits_after_reload(cfg, tmp_pa
         saved = client.put(url, json=draft)
         assert saved.status_code == 200
         assert saved.json()["providers"][0]["has_api_key"]
-        assert "replacement-provider-key" not in saved.text
+        assert saved.json()["providers"][0]["api_key"] == "replacement-provider-key"
+        assert client.get(url).json()["providers"][0]["api_key"] == "replacement-provider-key"
         assert client.put(url, json=saved.json()).status_code == 200
     restored = load_config(path)
     assert restored.upstreams[0].api_key == "replacement-provider-key"
