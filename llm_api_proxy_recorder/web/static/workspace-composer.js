@@ -1,10 +1,10 @@
 "use strict";
 
-/* Keep native command text behind inline, removable skill mentions. */
-function createWorkspaceComposer(input, createMention) {
+/* Keep native command and file reference text behind inline mentions. */
+function createWorkspaceComposer(input, createMention, createFileMention) {
   function readText(node) {
     if (node.nodeType === Node.TEXT_NODE) return node.data.replaceAll("\u00a0", " ");
-    if (node.nodeType === Node.ELEMENT_NODE && node.dataset.skillCommand) return node.dataset.skillCommand;
+    if (node.nodeType === Node.ELEMENT_NODE && node.dataset.mentionText) return node.dataset.mentionText;
     if (node.nodeName === "BR") return "\n";
     let text = "";
     for (const child of node.childNodes) {
@@ -45,8 +45,8 @@ function createWorkspaceComposer(input, createMention) {
   function pointAt(offset) {
     const walker = document.createTreeWalker(input, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
-        if (node.parentElement?.closest("[data-skill-command]")) return NodeFilter.FILTER_REJECT;
-        return node.nodeType === Node.TEXT_NODE || node.dataset.skillCommand || node.nodeName === "BR"
+        if (node.parentElement?.closest("[data-mention-text]")) return NodeFilter.FILTER_REJECT;
+        return node.nodeType === Node.TEXT_NODE || node.dataset.mentionText || node.nodeName === "BR"
           ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
       },
     });
@@ -72,21 +72,55 @@ function createWorkspaceComposer(input, createMention) {
   function highlightSkill(skill) {
     const chip = input.querySelector("[data-skill-command]");
     if (chip?.dataset.skillCommand === (skill ? `/${skill.name}` : undefined)) return;
-    const text = value();
     const selection = selectionOffsets();
-    input.replaceChildren();
+    if (chip) chip.replaceWith(document.createTextNode(chip.dataset.mentionText));
+    const text = value();
     const prefix = skill ? text.match(/^\s*\/[^\s]+/)?.[0] : "";
     if (prefix) {
-      const leading = prefix.slice(0, prefix.indexOf("/"));
-      if (leading) input.append(document.createTextNode(leading));
       const mention = createMention(skill);
-      mention.contentEditable = "false";
+      prepareMention(mention, `/${skill.name}`, `技能 ${skill.name}`);
       mention.dataset.skillCommand = `/${skill.name}`;
-      mention.setAttribute("aria-label", `技能 ${skill.name}`);
-      mention.setAttribute("draggable", "false");
-      input.append(mention, textNode(text.slice(prefix.length)));
-    } else if (text) input.append(textNode(text));
+      const range = document.createRange();
+      const start = pointAt(prefix.indexOf("/")), end = pointAt(prefix.length);
+      range.setStart(start[0], start[1]);
+      range.setEnd(end[0], end[1]);
+      range.deleteContents();
+      range.insertNode(mention);
+    }
     if (selection) setSelectionRange(selection.anchor, selection.focus);
+  }
+
+  function prepareMention(mention, text, label) {
+    mention.contentEditable = "false";
+    mention.dataset.mentionText = text;
+    mention.setAttribute("aria-label", label);
+    mention.setAttribute("draggable", "false");
+  }
+
+  function insertFileReference(path, start, end) {
+    const mention = createFileMention(path);
+    prepareMention(mention, `@${path}`, `引用文件 ${path}`);
+    mention.dataset.filePath = path;
+    const space = /^\s/.test(value().slice(end)) ? "" : " ";
+    input.focus();
+    setSelectionRange(start, end);
+    // Native editing keeps inserting, deleting and restoring references undoable.
+    document.execCommand("insertHTML", false, mention.outerHTML + space);
+    setSelectionRange(start + path.length + 1 + space.length);
+  }
+
+  function isFileReferenceAt(offset) {
+    return Array.from(input.querySelectorAll("[data-file-path]")).some((mention) => {
+      const index = Array.prototype.indexOf.call(mention.parentNode.childNodes, mention);
+      const start = offsetAt(mention.parentNode, index);
+      return offset > start && offset <= start + mention.dataset.mentionText.length;
+    });
+  }
+
+  function clearFileReferences() {
+    for (const mention of input.querySelectorAll("[data-file-path]")) {
+      mention.replaceWith(document.createTextNode(mention.dataset.mentionText));
+    }
   }
 
   // Copy native slash syntax so pasted mentions can be recognized again.
@@ -114,5 +148,12 @@ function createWorkspaceComposer(input, createMention) {
     },
     setSelectionRange,
     highlightSkill,
+    insertFileReference,
+    isFileReferenceAt,
+    clearFileReferences,
+    get fileReferences() {
+      return [...new Set(Array.from(input.querySelectorAll("[data-file-path]"), mention => mention.dataset.filePath))]
+        .map(path => ({ path }));
+    },
   };
 }

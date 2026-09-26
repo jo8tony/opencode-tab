@@ -556,10 +556,6 @@
 .wsp-stats-left { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .wsp-stat-context { flex: none; margin-left: auto; }
 .wsp-message.user .wsp-message-inner { padding: 9px 15px; line-height: 1.5; }
-.wsp-attachment-file { position: relative; max-width: min(100%, 360px); min-width: 0; min-height: 28px; padding: 4px 27px 4px 9px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 8px; background: #fbfcfe; }
-.wsp-attachment-file > span:nth-child(2) { min-width: 0; overflow: hidden; color: var(--text-dim); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.wsp-attachment-icon { color: var(--accent); font-size: 13px; }
-.wsp-attachment-file button { position: absolute; top: 50%; right: 3px; width: 20px; height: 20px; transform: translateY(-50%); display: grid; place-items: center; border: 1px solid #d7dce5; border-radius: 50%; background: rgba(255,255,255,.95); color: var(--text-dim); font-size: 14px; line-height: 1; cursor: pointer; }
 .wsp-status { width: 27px; height: 27px; padding: 0; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; background: #fff; color: var(--text-faint); }
 .wsp-status.ready { border-color: #c6e7d5; background: #f1faf5; color: var(--green); }
 .wsp-status.busy { border-color: #ccdcfb; background: #f2f6ff; color: var(--accent); }
@@ -612,11 +608,14 @@
 .wsp-input[contenteditable]:empty::before, .wsp-input[data-empty="true"]::before { content: attr(data-placeholder); color: var(--text-faint); pointer-events: none; }
 .wsp-skill-error { padding: 0 16px 6px; color: #b84f4b; font-size: 12px; }
 .wsp-skill-error[hidden] { display: none; }
-.wsp-skill-mention { display: inline-flex; align-items: center; gap: 4px; color: #245abb; font-weight: 500; vertical-align: baseline; white-space: nowrap; }
-.wsp-input .wsp-skill-mention { user-select: all; border-radius: 3px; }
-.wsp-input .wsp-skill-mention:hover { background: #edf4ff; }
+.wsp-skill-mention, .wsp-file-mention { display: inline-flex; align-items: center; gap: 4px; color: #245abb; font-weight: 500; vertical-align: baseline; white-space: nowrap; }
+.wsp-input .wsp-skill-mention, .wsp-input .wsp-file-mention { user-select: all; border-radius: 3px; }
+.wsp-input .wsp-skill-mention:hover, .wsp-input .wsp-file-mention:hover { background: #edf4ff; }
 .wsp-skill-icon { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; flex-shrink: 0; }
 .wsp-skill-mention .wsp-skill-icon { width: 16px; height: 16px; align-self: center; }
+.wsp-file-icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; flex-shrink: 0; }
+.wsp-file-mention { max-width: 100%; }
+.wsp-file-mention > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .wsp-skill-message { white-space: pre-wrap; overflow-wrap: anywhere; }
 .wsp-skill-use { border-color: #d5e3ff; }
 .wsp-skill-use .wsp-tool-head { color: #245abb; }

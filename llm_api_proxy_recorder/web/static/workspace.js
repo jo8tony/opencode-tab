@@ -60,7 +60,7 @@ function renderWorkspace(view) {
   const content = view.querySelector("#wsp-content");
   const scroll = view.querySelector("#wsp-scroll");
   const input = view.querySelector("#wsp-input");
-  const composer = createWorkspaceComposer(input, skillMention);
+  const composer = createWorkspaceComposer(input, skillMention, fileMention);
   const attachmentList = view.querySelector("#wsp-attachment-list");
   const statsLine = view.querySelector("#wsp-stats");
   const modelButton = view.querySelector("#wsp-model-trigger");
@@ -342,17 +342,7 @@ function renderWorkspace(view) {
           } }));
       attachmentList.append(preview);
     }
-    for (const reference of state.fileReferences) {
-      attachmentList.append(el("div", { class: "wsp-attachment-file", title: reference.path },
-        el("span", { class: "wsp-attachment-icon", "aria-hidden": "true", text: "▤" }),
-        el("span", { text: reference.path }),
-        el("button", { type: "button", title: `移除 ${reference.path}`, "aria-label": `移除 ${reference.path}`,
-          text: "×", onclick: () => {
-            state.fileReferences = state.fileReferences.filter((item) => item.id !== reference.id);
-            renderAttachments();
-          } })));
-    }
-    attachmentList.hidden = state.attachments.length === 0 && state.fileReferences.length === 0;
+    attachmentList.hidden = state.attachments.length === 0;
   }
 
   function readImage(file) {
@@ -657,9 +647,9 @@ function renderWorkspace(view) {
     return box;
   }
 
-  function textPart(part, role) {
+  function textPart(part, role, references = []) {
     const node = el("div", { class: "wsp-part wsp-text" });
-    if (role === "user") node.textContent = isInitCommandPrompt(part.text) ? "/init" : part.text || "";
+    if (role === "user") appendFileMentions(node, isInitCommandPrompt(part.text) ? "/init" : part.text || "", references);
     else node.append(trjMarkdown(part.text || ""));
     return node;
   }
@@ -706,7 +696,32 @@ function renderWorkspace(view) {
       el("span", { text: skill.name }));
   }
 
+  function fileMention(path) {
+    return el("span", { class: "wsp-file-mention", title: path },
+      el("svg", { viewBox: "0 0 20 20", "aria-hidden": "true", class: "wsp-file-icon" },
+        el("path", { d: "M4 2.5h8l4 4v11H4z M12 2.5v4h4 M7 10h6 M7 13h6" })),
+      el("span", { text: path.split("/").at(-1) }));
+  }
+
+  function fileReferencePattern(paths) {
+    const names = [...new Set(paths)].sort((a, b) => b.length - a.length)
+      .map(path => path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    return names.length ? new RegExp(`(^|[\\s(\\[{"'])@(${names.join("|")})`, "g") : null;
+  }
+
+  function appendFileMentions(node, text, paths) {
+    const pattern = fileReferencePattern(paths);
+    let cursor = 0;
+    if (pattern) for (const match of text.matchAll(pattern)) {
+      const start = match.index + match[1].length;
+      node.append(document.createTextNode(text.slice(cursor, start)), fileMention(match[2]));
+      cursor = start + match[2].length + 1;
+    }
+    node.append(document.createTextNode(text.slice(cursor)));
+  }
+
   function updateSkillInput() {
+    state.fileReferences = composer.fileReferences;
     if (composingInput) return;
     const errorLine = view.querySelector("#wsp-skill-error");
     input.dataset.empty = String(!composer.value);
@@ -956,6 +971,8 @@ function renderWorkspace(view) {
         el("strong", { text: "Sona" }),
         `OpenCode${modelInfo?.providerID && modelInfo?.modelID ? ` · ${modelInfo.providerID} / ${modelInfo.modelID}` : ""}`));
       const parts = message.parts || [];
+      const references = role === "user" ? parts.filter(part => part.type === "file" &&
+        part.url?.startsWith("file:") && part.filename).map(part => part.filename) : [];
       if (message.skillUse) {
         body.append(el("div", { class: "wsp-text wsp-skill-message" }, skillMention(message.skillUse),
           message.skillUse.arguments ? ` ${message.skillUse.arguments}` : ""));
@@ -981,7 +998,7 @@ function renderWorkspace(view) {
         flushTools();
         if (part.type === "text" && !part.synthetic) {
           if (message.skillUse) body.append(el("details", { class: "wsp-reasoning" }, el("summary", { text: "查看已加载技能内容" }), el("pre", { text: part.text })));
-          else body.append(textPart(part, role));
+          else body.append(textPart(part, role, references));
         }
         else if (part.type === "reasoning" && part.text) {
           const reasoning = el("details", { class: "wsp-reasoning" }, el("summary", { text: "思考过程" }), el("div", { text: part.text }));
@@ -991,6 +1008,13 @@ function renderWorkspace(view) {
           body.append(reasoning);
         } else if (part.type === "file") {
           const filename = part.filename || "附件";
+          if (references.includes(filename)) {
+            const pattern = fileReferencePattern([filename]);
+            if (!parts.some(item => item.type === "text" && !item.synthetic && pattern.test(item.text || ""))) {
+              body.append(el("div", { class: "wsp-text" }, fileMention(filename)));
+            }
+            continue;
+          }
           const file = el("div", { class: "wsp-message-file" },
             el("span", { text: `📎 ${filename}` }));
           if (/^data:image\/(?:png|jpeg|gif|webp);base64,/.test(part.url || "")) {
@@ -1548,6 +1572,7 @@ function renderWorkspace(view) {
 
   function currentFileMention() {
     const cursor = composer.selectionStart ?? composer.value.length;
+    if (composer.isFileReferenceAt(cursor)) return null;
     const before = composer.value.slice(0, cursor);
     const match = /(^|[\s(\[{"'])@([^\s@]*)$/u.exec(before);
     if (!match) return null;
@@ -1600,6 +1625,7 @@ function renderWorkspace(view) {
   }
 
   function selectFileReference(path) {
+    state.fileReferences = composer.fileReferences;
     if (state.attachments.length + state.fileReferences.length >= 8 &&
         !state.fileReferences.some((item) => item.path === path)) {
       toast("一条消息最多添加 8 个附件或文件引用", "error");
@@ -1607,18 +1633,9 @@ function renderWorkspace(view) {
       return;
     }
     const mention = fileMentionRange || currentFileMention();
-    if (mention) {
-      const suffix = composer.value.slice(mention.end);
-      const replacement = `@${path}${suffix && /^\s/.test(suffix) ? "" : " "}`;
-      composer.value = composer.value.slice(0, mention.start) + replacement + suffix;
-      const cursor = mention.start + replacement.length;
-      updateSkillInput();
-      composer.setSelectionRange(cursor, cursor);
-    }
-    if (!state.fileReferences.some((item) => item.path === path)) {
-      state.fileReferences.push({ id: `${Date.now()}-${Math.random()}`, path });
-    }
-    renderAttachments();
+    if (!mention) return;
+    composer.insertFileReference(path, mention.start, mention.end);
+    updateSkillInput();
     hideAutocomplete();
     input.focus();
   }
@@ -1806,6 +1823,7 @@ function renderWorkspace(view) {
     scrollToLatestOnLoad = true;
     state.projectId = projectId;
     state.skills = []; state.commands = []; updateSkillInput();
+    composer.clearFileReferences();
     state.attachments = [];
     state.fileReferences = [];
     renderAttachments();
@@ -1836,6 +1854,7 @@ function renderWorkspace(view) {
     scrollToLatestOnLoad = true;
     state.projectId = projectId;
     state.skills = []; state.commands = []; updateSkillInput();
+    composer.clearFileReferences();
     state.attachments = [];
     state.fileReferences = [];
     renderAttachments();
@@ -2087,6 +2106,7 @@ function renderWorkspace(view) {
   }));
   view.querySelector("#wsp-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    state.fileReferences = composer.fileReferences;
     const text = composer.value.trim();
     if ((!text && !state.attachments.length && !state.fileReferences.length) || state.sending) return;
     if (state.pendingImageCount) { toast("图片正在读取，请稍后发送", "error"); return; }
