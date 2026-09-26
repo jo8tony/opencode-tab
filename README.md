@@ -251,6 +251,12 @@ npm run desktop:build
 
 推送到 `main` 分支或在 GitHub Actions 中手动运行 `Build macOS Installers`，会分别在 Apple Silicon 和 Intel 构建机上运行测试、打包，并上传 `sona-code-macos-arm64` 与 `sona-code-macos-x86_64` 两个 artifact。下载对应架构的 artifact 后解压，即可取得 `.dmg` 安装盘。CI 产物沿用 ad-hoc 签名，尚未经过 Apple notarization。
 
+### GitHub Release 发布
+
+推送 `v*` 版本标签或发布 GitHub Release 时，Windows x64、macOS Apple Silicon 和 Intel 工作流会构建并验证安装包，然后将 `.exe` / `.dmg` 上传到对应 Release；标签尚无 Release 时会自动创建。已有 Release 的说明会保留，同名安装包会替换。普通 `main` 推送仍只保存 Actions artifact。
+
+为已有版本补发安装包：在 GitHub Actions 中分别打开 `Build Windows Installer` 和 `Build macOS Installers`，点击 `Run workflow`，选择包含最新工作流的 `main` 分支，并填写 `release_tag`（例如 `v1.2.0`）。工作流会检出该标签的代码，构建并上传到该版本 Release。留空则仅构建并保存 artifact。
+
 ### Windows 安装包
 
 推送到 `main` 分支会触发 `.github/workflows/build-windows.yml`：在 Windows x64 环境运行测试、构建 PyInstaller sidecar、生成 Tauri NSIS 安装程序，并上传名为 `sona-code-windows-x64` 的 GitHub Actions artifact。
