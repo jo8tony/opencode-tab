@@ -9,11 +9,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 
 from llm_api_proxy_recorder.admin.api import router as admin_router
 from llm_api_proxy_recorder.admin.skills import SkillStore
+from llm_api_proxy_recorder.admin.model_routes import router as models_router
 from llm_api_proxy_recorder.admin.skill_routes import router as skills_router
 from llm_api_proxy_recorder.config import CONFIG_PATH, AppConfig, resolved_records_dir
 from llm_api_proxy_recorder.proxy.client import UpstreamClient
@@ -64,14 +66,16 @@ class RuntimeState:
 
     def __init__(self, config: AppConfig, config_path: str):
         self.config = config
+        self.config_lock = asyncio.Lock()
+        self.pending_server = config.server.model_copy()
         self.upstream_client = UpstreamClient(config.outbound.proxy_url)
         self.store = CallStore(resolved_records_dir(config))
         self.terminal = TerminalManager()
         self.terminal_projects = TerminalProjectStore(config_path)
-        self.workspace = WorkspaceManager()
+        self.workspace = WorkspaceManager(lambda: self.config)
         self.skills = SkillStore()
 
-    async def apply_config(self, new_cfg: AppConfig) -> None:
+    async def apply_config(self, new_cfg: AppConfig, *, restart_workspace: bool = True) -> None:
         """热更新：换 config 引用；出站代理变化时重建客户端；记录目录变化时重建 store。"""
         old_cfg = self.config
         old_proxy = self.config.outbound.proxy_url
@@ -81,8 +85,9 @@ class RuntimeState:
             await self.upstream_client.rebuild(new_cfg.outbound.proxy_url)
         if resolved_records_dir(new_cfg) != old_dir:
             self.store = CallStore(resolved_records_dir(new_cfg))
-        if (
-            new_cfg.terminal != old_cfg.terminal
+        if restart_workspace and (
+            new_cfg.model_settings != old_cfg.model_settings
+            or new_cfg.terminal != old_cfg.terminal
             or new_cfg.upstreams != old_cfg.upstreams
             or new_cfg.default_upstream != old_cfg.default_upstream
             or new_cfg.server.port != old_cfg.server.port
@@ -135,7 +140,14 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
         return result
 
     # 管理 API 路由集（ping 之后、兜底代理路由之前）
+    @app.exception_handler(RequestValidationError)
+    async def safe_validation_error(request, exc):
+        # Pydantic includes submitted input by default, including API keys.
+        errors = [{k: v for k, v in error.items() if k not in {"input", "ctx"}} for error in exc.errors()]
+        return JSONResponse(status_code=422, content={"detail": errors})
+
     app.include_router(admin_router, prefix=f"{cfg.server.admin_prefix}/api")
+    app.include_router(models_router, prefix=f"{cfg.server.admin_prefix}/api")
     app.include_router(skills_router, prefix=f"{cfg.server.admin_prefix}/api")
 
     # 终端 API（REST + WebSocket，同样先于兜底代理路由注册）

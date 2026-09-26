@@ -302,6 +302,7 @@ async function renderTrajectorySession(view, key) {
 
   // 错误 / 解析警告 banner
   const turnBanners = (t) => [
+    t.history_incomplete ? el("div", { class: "banner banner-warn" }, "关联的 Responses 历史未完整捕获；仅展示已有记录。") : null,
     t.error ? el("div", { class: "banner banner-err", style: "margin-top:10px" },
       el("b", { text: "错误：" }), (t.error.type || "") + " " + (t.error.message || "")) : null,
     t.parse_error ? el("div", { class: "banner banner-warn", style: "margin-top:10px" },

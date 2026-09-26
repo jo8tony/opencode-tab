@@ -44,12 +44,17 @@ class ParsedRequestInfo(BaseModel):
     stream: bool = False
     messages: list[Any] | None = None
     tools: list[Any] | None = None
+    protocol: str | None = None
+    previous_response_id: str | None = None
     params: dict[str, Any] | None = None  # temperature/max_tokens 等其余字段
 
 
 class ParsedResponseInfo(BaseModel):
     """响应体解析结果（后台解析，不影响转发）。"""
 
+    protocol: str | None = None
+    response_id: str | None = None
+    unknown_events: list[dict] | None = None
     message: dict[str, Any] | None = None  # 组装后的 assistant 消息
     finish_reason: str | None = None
     parse_error: str | None = None
@@ -106,6 +111,10 @@ class CallRecord(BaseModel):
     upstream_url: str
     model: str | None = None
     stream: bool = False
+    protocol: str | None = None
+    response_id: str | None = None
+    previous_response_id: str | None = None
+    history_incomplete: bool = False
     session_key: str | None = None  # 会话归属（后台解析计算）
     request: RequestInfo
     response: ResponseInfo = Field(default_factory=ResponseInfo)

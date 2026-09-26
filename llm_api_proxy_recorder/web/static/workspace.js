@@ -26,7 +26,7 @@ function renderWorkspace(view) {
     projectId: workspaceSelection.projectId, sessionId: workspaceSelection.sessionId,
     messages: [], permissions: [], questions: [], questionDrafts: new Map(), questionPages: new Map(),
     questionErrors: new Map(), diffs: [], todos: [], children: [], statuses: {},
-    check: null, tab: "chat", search: "", sending: false, chosenModels: new Map(),
+    check: null, tab: "chat", search: "", sending: false, chosenModels: new Map(), defaultModel: null,
     chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], skills: [], modelLoadError: "",
     collapsedProjects: new Set(), expandedTools: new Map(), pendingAction: "", actionError: "", compactingSessionId: null,
     attachments: [], fileReferences: [], pendingImageCount: 0, pendingImageBytes: 0, commandSelectedIndex: 0,
@@ -45,7 +45,7 @@ function renderWorkspace(view) {
       </aside>
       <div class="wsp-side-scrim" id="wsp-side-scrim"></div>
       <div class="wsp-main">
-        <nav class="wsp-global-nav" aria-label="主导航"><a class="active" href="#/workspace">工作区</a><a href="#/skills">技能</a><a href="#/terminal">OpenCode 终端</a><a href="#/trajectory">轨迹</a><a href="#/calls">调用列表</a><a href="#/dashboard">仪表盘</a><a href="#/settings">设置</a><span class="wsp-nav-spacer"></span><span class="wsp-nav-note">代理观测与开发对话</span></nav>
+        <nav class="wsp-global-nav" aria-label="主导航"><a class="active" href="#/workspace">工作区</a><a href="#/models">模型</a><a href="#/skills">技能</a><a href="#/terminal">OpenCode 终端</a><a href="#/trajectory">轨迹</a><a href="#/calls">调用列表</a><a href="#/dashboard">仪表盘</a><a href="#/settings">设置</a><span class="wsp-nav-spacer"></span><span class="wsp-nav-note">代理观测与开发对话</span></nav>
         <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" fill="currentColor"/></svg></button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span></header>
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
@@ -175,6 +175,37 @@ function renderWorkspace(view) {
     } catch (error) { toast("复制失败：" + detail(error), "error"); }
   }
 
+  function lastUserMessage() {
+    return [...state.messages].reverse().find((message) => message.info?.role === "user" &&
+      !message.parts?.some((part) => part.type === "compaction"));
+  }
+
+  function recallUserMessage(message) {
+    if (!message) return;
+    const text = message.skillUse ? `/${message.skillUse.name} ${message.skillUse.arguments || ""}` :
+      (message.parts || []).filter((part) => part.type === "text" && !part.synthetic)
+        .map((part) => isInitCommandPrompt(part.text) ? "/init" : part.text || "").join("\n");
+    composer.value = text;
+    const references = (message.parts || []).filter((part) => part.type === "file" &&
+      part.url?.startsWith("file:") && part.filename).map((part) => part.filename);
+    const pattern = fileReferencePattern(references);
+    if (pattern) {
+      const matches = [...text.matchAll(pattern)].reverse();
+      for (const match of matches) {
+        const start = match.index + match[1].length;
+        composer.insertFileReference(match[2], start, start + match[2].length + 1, false);
+      }
+    }
+    state.attachments = (message.parts || []).filter((part) => part.type === "file" &&
+      part.mime?.startsWith("image/") && part.url && !part.url.startsWith("file:"))
+      .map((part) => ({ id: part.id, filename: part.filename || "图片", mime: part.mime, url: part.url }));
+    renderAttachments();
+    updateSkillInput();
+    hideAutocomplete();
+    input.focus();
+    composer.setSelectionRange(composer.value.length);
+  }
+
   function messageActions(message) {
     const projectId = state.projectId;
     const sessionId = state.sessionId;
@@ -209,6 +240,31 @@ function renderWorkspace(view) {
       });
       fork.disabled = !info.id;
       actions.append(fork);
+    }
+    if (info.role === "user" && info.id === lastUserMessage()?.info.id) {
+      const withdraw = actionButton("撤回最后一轮", "M9 10 4 5l5-4 M4 5h10a6 6 0 0 1 0 12h-3", async () => {
+        if (withdraw.disabled || state.sending) return;
+        if (!confirm("撤回最后一轮用户消息及模型回复，并将提问回填到输入框？项目文件修改会保留，当前输入框内容会被替换。")) return;
+        withdraw.disabled = true;
+        state.sending = true;
+        renderHeader();
+        try {
+          await api(`${sessionPath(projectId, sessionId)}/withdraw`, {
+            method: "POST", body: { message_id: info.id }, silent: true,
+          });
+          if (!alive() || state.projectId !== projectId || state.sessionId !== sessionId) return;
+          const index = state.messages.findIndex((item) => item.info?.id === info.id);
+          if (index >= 0) state.messages = state.messages.slice(0, index);
+          state.actionError = "";
+          recallUserMessage(message);
+          renderMain();
+          await refreshSelected();
+        } catch (error) { toast("撤回失败：" + detail(error), "error"); }
+        finally { state.sending = false; if (alive()) { renderHeader(); renderMain(); } }
+      });
+      withdraw.disabled = state.sending || state.statuses?.[sessionId]?.type === "busy" ||
+        state.statuses?.[sessionId]?.type === "retry";
+      actions.append(withdraw);
     }
     const created = message.info?.time?.created;
     const date = created != null ? new Date(created) : null;
@@ -663,29 +719,11 @@ function renderWorkspace(view) {
     const error = info?.error;
     if (!error) return null;
     const data = error.data || {};
-    const code = Number(data.statusCode || data.status || 0);
-    const raw = String(data.message || error.message || error.name || "OpenCode 请求失败");
-    const title = code === 401 || code === 403 ? "模型服务认证失败" : "OpenCode 请求失败";
-    const message = code === 401 || code === 403
-      ? "当前模型的服务商拒绝了认证。请检查密钥，或切换到已配置的 Provider。"
-      : raw.slice(0, 600);
-    const card = el("div", { class: "wsp-message-error" },
-      el("strong", { text: title }),
-      el("p", { text: message }),
-      el("small", { text: `${info.providerID || "未知 Provider"} / ${info.modelID || "未知模型"}${code ? ` · HTTP ${code}` : ""}` }));
-    if (raw && raw !== message) card.append(el("details", {}, el("summary", { text: "查看错误详情" }), el("pre", { text: raw.slice(0, 800) })));
-    card.append(el("div", { class: "wsp-error-actions" },
-      el("button", { type: "button", class: "wsp-mini primary", text: "切换模型", onclick: openModelPicker }),
-      el("button", { type: "button", class: "wsp-mini", text: "填回提问", onclick: () => {
-        const index = state.messages.findIndex((message) => message.info === info);
-        const earlier = state.messages.slice(0, index < 0 ? undefined : index).reverse().find((message) => message.info?.role === "user");
-        composer.value = (earlier?.parts || []).filter((part) => part.type === "text").map((part) => part.text || "").join("\n");
-        updateSkillInput();
-        input.focus();
-      } }),
-      el("a", { href: "#/settings", text: "检查设置" })));
-    return card;
+    const raw = data.responseBody || data.message || error.message || error.name || "OpenCode 请求失败";
+    return el("div", { class: "wsp-message-error" },
+      el("p", { text: typeof raw === "string" ? raw : JSON.stringify(raw, null, 2) }));
   }
+
   function skillIcon() {
     return el("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", class: "wsp-skill-icon" },
       el("path", { d: "m12 2 8 5v10l-8 5-8-5V7l8-5Zm0 10 8-5M12 12 4 7m8 5v10M4 12l8 5 8-5" }));
@@ -1288,24 +1326,27 @@ function renderWorkspace(view) {
 
   function selectedModel() {
     const [providerID, modelID] = (state.chosenModels.get(state.projectId) || "").split("\u0000");
-    return providerID && modelID ? { provider_id: providerID, model_id: modelID } : {};
+    return providerID && modelID ? { provider_id: providerID, model_id: modelID }
+      : state.defaultModel ? { provider_id: state.defaultModel.providerID, model_id: state.defaultModel.modelID } : {};
   }
 
-  function updateModelButton() {
+  function updateModelButton(clearInvalidVariant = true) {
     const choice = selectedModel();
     const provider = state.providers.find((item) => item.id === choice.provider_id);
     const model = provider?.models?.[choice.model_id];
     modelButton.replaceChildren(
-      el("span", { class: "wsp-model-label", text: model ? model.name || choice.model_id : "自动" }),
+      el("span", { class: "wsp-model-label", text: model ? model.name || choice.model_id : "选择模型" }),
       el("svg", { class: "wsp-model-chevron", viewBox: "0 0 24 24", "aria-hidden": "true" },
         el("path", { d: "m6 9 6 6 6-6" })));
-    modelButton.title = model ? `${provider.id} / ${choice.model_id}` : "由 OpenCode 选择默认模型";
+    modelButton.title = model?.source === "application" && !model.route_through_proxy
+      ? "本次调用不会进入本地调用记录与代理轨迹；工作区对话和工具活动仍然可见。" : model ? `${provider.id} / ${choice.model_id}` : "请添加或选择模型";
     const variants = Object.keys(model?.variants || {});
     variantSelect.replaceChildren(el("option", { value: "", text: "默认" }),
       ...variants.map((variant) => el("option", { value: variant, text: variant })));
     variantSelect.hidden = true;
     const chosen = state.chosenVariants.get(state.projectId) || "";
     variantSelect.value = variants.includes(chosen) ? chosen : "";
+    if (clearInvalidVariant && chosen && !variants.includes(chosen)) state.chosenVariants.set(state.projectId, "");
     variantTrigger.hidden = !variants.length;
     variantLabel.textContent = variantSelect.value || "默认";
     variantTrigger.dataset.default = String(!variantSelect.value);
@@ -1445,7 +1486,7 @@ function renderWorkspace(view) {
     const selected = state.chosenModels.get(state.projectId) || "";
     if (!query) modelList.append(el("button", { type: "button", class: "wsp-model-option" + (!selected ? " selected" : ""),
       onclick: () => chooseModel("") },
-      el("span", { text: "自动选择" }), el("small", { text: "使用 OpenCode 当前默认模型" })));
+      el("span", { text: "应用默认模型" }), el("small", { text: "使用模型页面配置的默认模型" })));
     let count = 0;
     for (const provider of state.providers) {
       const items = Object.entries(provider.models || {}).filter(([id, model]) =>
@@ -1454,25 +1495,30 @@ function renderWorkspace(view) {
       const group = el("section", { class: "wsp-model-group" },
         el("div", { class: "wsp-model-group-title" },
           el("strong", { text: provider.name || provider.id }),
-          el("span", { text: `${provider.id} · ${items.length} 个模型 · ${state.connectedProviders.has(provider.id) ? "已保存凭据" : "未配置凭据"}` })),
-        el("button", { type: "button", class: "wsp-provider-key", text: "设置 API Key", onclick: () => openProviderKeyDialog(provider) }));
+          el("span", { text: `${items.length} 个模型 · ${provider.source === "application" ? (provider.route_through_proxy ? "应用配置 · 代理记录" : "应用配置 · 直连") : "OpenCode 原生配置"}` })),
+        provider.source === "application"
+          ? el("a", { class: "wsp-provider-key", href: "#/models", text: "管理模型" })
+          : el("button", { type: "button", class: "wsp-provider-key", text: "设置 API Key", onclick: () => openProviderKeyDialog(provider) }));
       for (const [id, model] of items) {
         const value = `${provider.id}\u0000${id}`;
         group.append(el("button", { type: "button", class: "wsp-model-option" + (value === selected ? " selected" : ""),
           title: `${provider.id} / ${id}`, onclick: () => chooseModel(value) },
           el("span", { text: model.name || id }),
-          el("small", { text: id })));
+          el("small", { text: [id, model.capabilities?.input?.image ? "图片" : "", model.capabilities?.reasoning ? "思考" : "",
+            model.source === "application" ? (model.route_through_proxy ? "代理记录" : "直连 · 不记录代理轨迹") : "原生路由",
+            model.capabilities?.toolcall === false ? "不支持工具调用" : ""].filter(Boolean).join(" · ") })));
         count++;
       }
       modelList.append(group);
     }
     if (!count && query) modelList.append(el("p", { class: "wsp-picker-empty", text: "没有匹配的模型" }));
-    else if (!state.providers.length) modelList.append(el("p", { class: "wsp-picker-empty", text: "暂无可用 Provider；请检查 OpenCode 配置。" }));
+    else if (!state.providers.length) modelList.append(el("p", { class: "wsp-picker-empty", text: "暂无可用模型，请前往模型页面添加。" }));
     if (!modelPicker.hidden) positionPicker(modelPicker, modelButton, "right");
   }
 
   function openModelPicker() {
     if (!state.projectId) return;
+    loadModels(state.projectId);
     closeAgentPicker();
     closeVariantPicker();
     hideAutocomplete();
@@ -1486,19 +1532,24 @@ function renderWorkspace(view) {
 
   async function loadModels(projectId) {
     state.providers = [];
+    state.defaultModel = null;
     state.modelLoadError = "";
-    updateModelButton();
+    updateModelButton(false);
     try {
       const data = await api(`workspace/projects/${encodeURIComponent(projectId)}/models`, { silent: true });
       if (!alive() || state.projectId !== projectId) return;
       state.providers = Array.isArray(data.providers) ? data.providers.slice().sort((a, b) =>
         (a.id === "opencode" ? -1 : b.id === "opencode" ? 1 : (a.name || a.id).localeCompare(b.name || b.id))) : [];
+      state.defaultModel = data.default_model || null;
       state.connectedProviders = new Set(Array.isArray(data.connected) ? data.connected : []);
       const value = state.chosenModels.get(projectId) || "";
       if (value) {
         const [providerID, modelID] = value.split("\u0000");
         if (!state.providers.some((provider) => provider.id === providerID && provider.models?.[modelID])) {
           state.chosenModels.set(projectId, "");
+          state.chosenVariants.set(projectId, "");
+          try { localStorage.removeItem(`sona-code:model:${projectId}`); } catch (_) {}
+          toast("原模型已不可用，请重新选择模型", "error");
         }
       }
       updateModelButton();
@@ -1768,6 +1819,7 @@ function renderWorkspace(view) {
         }
       } catch (_) { /* A malformed event should not interrupt updates. */ }
     };
+    events.onopen = () => { if (alive() && state.projectId === projectId) loadModels(projectId); };
     events.onerror = () => { /* EventSource reconnects; polling also remains active. */ };
   }
 
@@ -2198,6 +2250,13 @@ function renderWorkspace(view) {
       event.preventDefault();
       updateSkillInput();
       hideAutocomplete();
+      return;
+    }
+    if (!composing && event.key === "ArrowUp" && !event.shiftKey && !event.metaKey && !event.ctrlKey &&
+        !event.altKey && commandMenu.hidden && !composer.value && !state.attachments.length &&
+        !state.pendingImageCount && !state.sending) {
+      const message = lastUserMessage();
+      if (message) { event.preventDefault(); recallUserMessage(message); }
       return;
     }
     if (!composing && !commandMenu.hidden && (event.key === "ArrowDown" || event.key === "ArrowUp")) {

@@ -13,13 +13,6 @@ function renderSettings(view) {
     }
     const cfg = settings.config;
 
-    // 上游数据副本（_extraText 为 extra_headers 的多行文本编辑态）
-    const ups = cfg.upstreams.map((u) => Object.assign({}, u, {
-      _extraText: Object.entries(u.extra_headers || {}).map(([k, v]) => k + "=" + v).join("\n"),
-    }));
-    const originalNames = new Set(cfg.upstreams.map((u) => u.name));
-    let defaultUp = cfg.default_upstream;
-
     const restartBanner = el("div", { class: "banner banner-warn hidden" },
       el("b", { text: "⚠ 监听配置已变更：" }), "host / port / admin_prefix 属于监听配置，需重启服务后生效");
     const errBanner = el("div", { class: "banner banner-err hidden" });
@@ -55,138 +48,9 @@ function renderSettings(view) {
     }
     const splitCsv = (s) => String(s || "").split(",").map((x) => x.trim()).filter(Boolean);
 
-    /* ---------------- 上游行 */
-    const upBox = el("div");
-    let upSel = null;
-    function syncTerminalUpstreams(selected = upSel && upSel.value) {
-      if (!upSel) return;
-      upSel.replaceChildren(el("option", { value: "", text: "（默认上游）" }),
-        ...ups.filter((u) => u.name).map((u) => el("option", { value: u.name, text: u.name })));
-      upSel.value = ups.some((u) => u.name === selected) ? selected : "";
-    }
-    function renderUps() {
-      upBox.replaceChildren();
-      ups.forEach((u) => upBox.append(upCard(u)));
-      syncTerminalUpstreams();
-    }
-
-    function upCard(u) {
-      const nameIn = el("input", { type: "text", value: u.name, placeholder: "名称，如 deepseek", class: "mono" });
-      nameIn.addEventListener("input", () => {
-        const old = u.name;
-        u.name = nameIn.value.trim();
-        if (defaultUp === old) defaultUp = u.name; // 默认上游改名跟随
-        syncTerminalUpstreams(upSel && upSel.value === old ? u.name : upSel && upSel.value);
-      });
-      const urlIn = el("input", { type: "text", value: u.base_url, placeholder: "https://api.example.com", class: "mono" });
-      urlIn.addEventListener("input", () => { u.base_url = urlIn.value.trim(); });
-      const keyIn = el("input", { type: "password", value: u.api_key || "", placeholder: "sk-…（留空表示无密钥）", class: "mono", autocomplete: "off" });
-      keyIn.addEventListener("input", () => { u.api_key = keyIn.value; });
-      const eye = el("button", { class: "btn btn-xs", type: "button", text: "显示", title: "切换明文显示", onclick: () => {
-        const show = keyIn.type === "password";
-        keyIn.type = show ? "text" : "password";
-        eye.textContent = show ? "隐藏" : "显示";
-      } });
-      const stratSel = el("select", null,
-        el("option", { value: "replace", text: "replace（注入上游密钥）" }),
-        el("option", { value: "keep", text: "keep（透传客户端密钥）" }));
-      stratSel.value = u.key_strategy || "replace";
-      stratSel.addEventListener("change", () => { u.key_strategy = stratSel.value; });
-      const extraTa = el("textarea", { rows: "2", class: "mono", placeholder: "extra_headers，每行一条：Header=Value" });
-      extraTa.value = u._extraText || "";
-      extraTa.addEventListener("input", () => { u._extraText = extraTa.value; });
-      u.models = u.models || [];
-      const modelsBox = el("div", { class: "model-list" });
-      const modalityLabels = [["image", "图片"], ["audio", "音频"], ["video", "视频"], ["pdf", "PDF"]];
-      function renderModels() {
-        modelsBox.replaceChildren(...u.models.map((model) => {
-          const idIn = el("input", { type: "text", value: model.id || "", class: "mono", placeholder: "模型 ID，如 deepseek-chat" });
-          idIn.addEventListener("input", () => { model.id = idIn.value.trim(); });
-          const caps = el("div", { class: "model-capabilities" },
-            ...modalityLabels.map(([value, label]) => {
-              const check = el("input", { type: "checkbox", checked: (model.input_modalities || []).includes(value) });
-              check.addEventListener("change", () => {
-                const selected = new Set(model.input_modalities || []);
-                if (check.checked) selected.add(value);
-                else selected.delete(value);
-                model.input_modalities = modalityLabels.map(([id]) => id).filter((id) => selected.has(id));
-              });
-              return el("label", { class: "model-toggle" }, check, label);
-            }));
-          const remove = el("button", { type: "button", class: "btn btn-xs btn-danger", text: "移除", onclick: () => {
-            u.models.splice(u.models.indexOf(model), 1);
-            renderModels();
-          } });
-          return el("div", { class: "model-row" }, idIn, caps, remove);
-        }));
-      }
-      renderModels();
-      const addModel = el("button", { type: "button", class: "btn btn-xs", text: "+ 添加模型", onclick: () => {
-        u.models.push({ id: "", input_modalities: [] });
-        renderModels();
-      } });
-
-      const radio = el("input", { type: "radio", name: "up-default", checked: u.name === defaultUp });
-      radio.addEventListener("change", () => {
-        if (radio.checked) { defaultUp = u.name; renderUps(); }
-      });
-
-      const testRes = el("span", { class: "test-res" });
-      const testBtn = el("button", { class: "btn btn-xs", type: "button", text: "测试连通性", onclick: async () => {
-        testBtn.disabled = true;
-        testRes.className = "test-res dim";
-        testRes.textContent = " 测试中…";
-        const body = {};
-        if (u.name && originalNames.has(u.name)) body.name = u.name; // 已保存过的上游可用 name
-        if (u.base_url) body.base_url = u.base_url;
-        if (u.api_key) body.api_key = u.api_key;
-        try {
-          const r = await api("settings/test-upstream", { method: "POST", body, silent: true });
-          if (r.ok) {
-            testRes.className = "test-res ok";
-            testRes.textContent = ` ✓ HTTP ${r.status_code} · ${r.latency_ms} ms`;
-          } else {
-            testRes.className = "test-res err";
-            testRes.textContent = ` ✗ ${r.status_code != null ? "HTTP " + r.status_code + " · " : ""}${r.error || "失败"}`;
-          }
-        } catch (e) {
-          testRes.className = "test-res err";
-          testRes.textContent = " ✗ " + (e.detail ? format422(e.detail) : e.message);
-        }
-        testBtn.disabled = false;
-      } });
-      const delBtn = el("button", { class: "btn btn-xs btn-danger", type: "button", text: "删除", onclick: () => {
-        const i = ups.indexOf(u);
-        if (i >= 0) ups.splice(i, 1);
-        if (defaultUp === u.name && ups.length) defaultUp = ups[0].name;
-        renderUps();
-      } });
-
-      return el("div", { class: "up-card" },
-        el("div", { class: "up-head" },
-          el("label", { class: "default-pick", title: "设为默认上游" }, radio, el("span", { text: "默认" })),
-          field("名称", nameIn),
-          field("转发策略", stratSel),
-          delBtn),
-        field("base_url", urlIn),
-        field("api_key", el("span", { class: "inline-controls" }, keyIn, eye)),
-        field("OpenCode 手动模型", el("div", null, modelsBox, addModel),
-          "模型 ID 要与上游接受的 model 值一致，无需写提供商前缀。勾选输入能力后，OpenCode 才允许使用对应文件。新建的代理模式会话会加入这些模型并停止在线更新目录；已有缓存中的模型仍可能显示。适用于 OpenAI 兼容接口。"),
-        field("extra_headers", extraTa),
-        el("div", { class: "up-actions" }, testBtn, testRes));
-    }
-
-    renderUps();
-    const addBtn = el("button", { class: "btn", type: "button", text: "+ 添加上游", onclick: () => {
-      ups.push({ name: "", base_url: "https://", api_key: "", models: [], extra_headers: {}, key_strategy: "replace", _extraText: "" });
-      renderUps();
-    } });
-
-    view.append(el("section", { class: "card" },
-      el("div", { class: "card-head-row" },
-        el("h2", { text: "上游服务" }),
-        el("span", { class: "empty-hint", text: "修改需点击底部保存后生效" })),
-      upBox, addBtn));
+    view.append(el("section", { class: "card" }, el("h2", { text: "模型配置" }),
+      el("p", { text: "提供商、模型、密钥与调用路由已统一移至模型页面。" }),
+      el("a", { class: "btn", href: "#/models", text: "管理模型" })));
 
     /* ---------------- 出站代理 */
     const proxyIn = el("input", { type: "text", value: cfg.outbound.proxy_url || "", placeholder: "http://127.0.0.1:7890 或 socks5://…", class: "mono" });
@@ -234,31 +98,15 @@ function renderSettings(view) {
     const shellIn = el("input", { type: "text", value: tc.shell_command || "", class: "mono", placeholder: "留空 = 使用系统默认 shell" });
     const maxSessIn = el("input", { type: "number", value: tc.max_sessions != null ? tc.max_sessions : 8, min: "1", max: "64", style: "width:120px" });
     const sbIn = el("input", { type: "number", value: tc.scrollback_kb != null ? tc.scrollback_kb : 256, min: "0", max: "8192", style: "width:120px" });
-    upSel = el("select");
-    syncTerminalUpstreams(tc.proxy_upstream || "");
     const envTa = el("textarea", { rows: "3", class: "mono", placeholder: "额外环境变量，每行一条：KEY=Value" });
     envTa.value = Object.entries(tc.inject_env || {}).map(([k, v]) => k + "=" + v).join("\n");
     const [termSw, termChk] = mkSwitch("启用 Web 终端（terminal.enabled）", tc.enabled !== false);
-    const modeSel = el("select", null,
-      el("option", { value: "proxy", text: "使用本代理接口" }),
-      el("option", { value: "original", text: "使用 OpenCode 原始配置" }));
-    modeSel.value = tc.route_through_proxy !== false ? "proxy" : "original";
-    const providerIn = el("input", { type: "text", value: tc.opencode_provider || "", class: "mono", placeholder: "留空 = 使用所选上游名称，如 deepseek" });
-    const syncMode = () => {
-      upSel.disabled = modeSel.value !== "proxy";
-      providerIn.disabled = modeSel.value !== "proxy";
-    };
-    modeSel.addEventListener("change", syncMode);
-    syncMode();
-
     view.append(el("section", { class: "card" },
       el("div", { class: "card-head-row" },
         el("h2", { text: "OpenCode 与终端" }),
         el("span", { class: "empty-hint", text: "工作区后台服务与旧版 Web 终端共用 OpenCode 配置" })),
       el("div", { class: "settings-grid" },
         termSw,
-        el("div", { class: "field full" }, el("label", { class: "f-label", text: "OpenCode 接口来源" }), modeSel,
-          el("div", { class: "f-hint", text: "本代理：对新启动的工作区服务或终端会话设置 provider 接口地址；原始配置：直接使用 OpenCode 自己的配置" })),
         el("div", { class: "field" }, el("label", { class: "f-label", text: "OpenCode 程序来源" }), cmdModeSel),
         el("div", { class: "field" }, el("label", { class: "f-label", text: "自定义 command" }), cmdIn,
           el("div", { class: "f-hint", text: "只有选择自定义时生效；可填完整路径或 PATH 命令" })),
@@ -266,10 +114,6 @@ function renderSettings(view) {
         el("div", { class: "field" }, el("label", { class: "f-label", text: "会话上限 max_sessions" }), maxSessIn),
         el("div", { class: "field" }, el("label", { class: "f-label", text: "回放缓冲 scrollback_kb" }), sbIn,
           el("div", { class: "f-hint", text: "重连浏览器时回放的输出大小（KB）" })),
-        el("div", { class: "field" }, el("label", { class: "f-label", text: "联动上游 proxy_upstream" }), upSel,
-          el("div", { class: "f-hint", text: "OpenCode 请求经该上游转发，并进入调用记录" })),
-        el("div", { class: "field" }, el("label", { class: "f-label", text: "OpenCode provider ID" }), providerIn,
-          el("div", { class: "f-hint", text: "对应 OpenCode 配置中的 provider 名称；留空时与所选上游同名" })),
         el("div", { class: "field full" }, el("label", { class: "f-label", text: "注入环境变量 inject_env" }), envTa))));
 
     /* ---------------- OpenCode 全局 JSONC 配置 */
@@ -468,18 +312,6 @@ function renderSettings(view) {
           port: parseInt(portIn.value, 10) || 0,
           admin_prefix: prefixIn.value.trim(),
         },
-        upstreams: ups.map((u) => ({
-          name: u.name,
-          base_url: u.base_url,
-          api_key: u.api_key || "",
-          models: (u.models || []).filter((model) => model.id).map((model) => ({
-            id: model.id,
-            input_modalities: model.input_modalities || [],
-          })),
-          extra_headers: parseExtra(u._extraText),
-          key_strategy: u.key_strategy || "replace",
-        })),
-        default_upstream: defaultUp,
         outbound: { proxy_url: proxyIn.value.trim() },
         recording: {
           dir: dirIn.value.trim() || "~/.llm-api-proxy-recorder/records",
@@ -499,9 +331,6 @@ function renderSettings(view) {
           shell_command: shellIn.value.trim(),
           max_sessions: Math.max(1, parseInt(maxSessIn.value, 10) || 8),
           scrollback_kb: Math.max(0, parseInt(sbIn.value, 10) || 0),
-          route_through_proxy: modeSel.value === "proxy",
-          proxy_upstream: upSel.value || "",
-          opencode_provider: providerIn.value.trim(),
           inject_env: parseExtra(envTa.value),
         },
       };

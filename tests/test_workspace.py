@@ -34,6 +34,7 @@ def test_workspace_projects_and_session_routes(tmp_path):
         upstreams=[UpstreamConfig(name="main", base_url="http://127.0.0.1:9001")],
         default_upstream="main",
         terminal=TerminalConfig(route_through_proxy=False),
+        model_settings={"show_native_models": True},
     )
     app = create_app(config, config_path=str(tmp_path / "config.json"))
     calls = []
@@ -228,3 +229,45 @@ def test_message_fork_includes_selected_reply(tmp_path, message_id, expected_ids
         invalid = client.post(endpoint, json={"message_id": "bad.id"})
         assert invalid.status_code == 400
         assert len(fork_payloads) == 1
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_withdraw_last_turn_deletes_all_replies_only(tmp_path, failed):
+    config = AppConfig(default_upstream="", recording={"dir": str(tmp_path / "records")})
+    app = create_app(config, config_path=str(tmp_path / "config.json"))
+    project = tmp_path / "project"
+    project.mkdir()
+    app.state.runtime.terminal_projects.add(str(project), "opencode")
+    messages = [
+        {"info": {"id": "msg_old", "role": "user"}, "parts": []},
+        {"info": {"id": "msg_old_reply", "role": "assistant"}, "parts": []},
+        {"info": {"id": "msg_last", "role": "user"}, "parts": [{"type": "text", "text": "retry me"}]},
+        {"info": {"id": "msg_tool", "role": "assistant"}, "parts": [{"type": "tool"}]},
+        {"info": {"id": "msg_reply", "role": "assistant", **({"error": {"data": {"message": "raw error"}}} if failed else {})}, "parts": []},
+    ]
+    deleted = []
+    status = "idle"
+
+    async def native(project, cfg, method, endpoint, **kwargs):
+        if endpoint == "/session/status":
+            return {"ses_test": {"type": status}}
+        if method == "GET" and endpoint.endswith("/message"):
+            return messages
+        assert method == "DELETE" and "/message/" in endpoint
+        deleted.append(endpoint.rsplit("/", 1)[-1])
+        messages[:] = [m for m in messages if m["info"]["id"] != deleted[-1]]
+        return True
+
+    app.state.runtime.workspace.request = native
+    with TestClient(app) as client:
+        pid = client.get("/__recorder/api/workspace/projects").json()["items"][0]["id"]
+        url = f"/__recorder/api/workspace/projects/{pid}/sessions/ses_test/withdraw"
+        assert client.post(url, json={"message_id": "msg_old"}).status_code == 409
+        assert client.post(url, json={"message_id": "bad/id"}).status_code == 400
+        for status in ("busy", "retry"):
+            assert client.post(url, json={"message_id": "msg_last"}).status_code == 409
+        assert not deleted
+        status = "idle"
+        assert client.post(url, json={"message_id": "msg_last"}).json() == {"ok": True}
+        assert deleted == ["msg_reply", "msg_tool", "msg_last"]
+        assert [m["info"]["id"] for m in messages] == ["msg_old", "msg_old_reply"]

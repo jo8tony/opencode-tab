@@ -13,6 +13,7 @@ import json
 import zlib
 from typing import Any, Mapping
 
+from llm_api_proxy_recorder.recording.responses import response_messages, response_message
 from llm_api_proxy_recorder.recording.sse import SSEParser, extract_usage
 
 # 请求体中不属于 messages/tools 的常见参数字段以外的部分全部归入 params，
@@ -39,14 +40,19 @@ def parse_request_body(body: Any) -> dict | None:
     if model is not None and not isinstance(model, str):
         model = str(model)
     stream = parsed_obj.get("stream") is True
-    messages = parsed_obj.get("messages")
+    protocol = "responses" if "input" in parsed_obj or "previous_response_id" in parsed_obj else "chat_completions"
+    messages = response_messages(parsed_obj) if protocol == "responses" else parsed_obj.get("messages")
     if not isinstance(messages, list):
         messages = None
     tools = parsed_obj.get("tools")
     if not isinstance(tools, list):
         tools = None
-    params = {k: v for k, v in parsed_obj.items() if k not in _REQUEST_KNOWN_KEYS} or None
-    return {"model": model, "stream": stream, "messages": messages, "tools": tools, "params": params}
+    known = _REQUEST_KNOWN_KEYS | ({"input", "instructions"} if protocol == "responses" else set())
+    params = {k: v for k, v in parsed_obj.items() if k not in known} or None
+    result = {"model": model, "stream": stream, "messages": messages, "tools": tools, "params": params}
+    if protocol == "responses":
+        result.update(protocol=protocol, previous_response_id=parsed_obj.get("previous_response_id"))
+    return result
 
 
 # ---------------------------------------------------------------- 响应体解析
@@ -74,6 +80,9 @@ def parse_nonsse_body(data: bytes) -> dict:
         usage = obj.get("usage")
         if isinstance(usage, dict) and usage:
             out["usage"] = extract_usage(usage)
+        if obj.get("object") == "response" or isinstance(obj.get("output"), list):
+            out.update(message=response_message(obj.get("output")), finish_reason=obj.get("status"),
+                       response_id=obj.get("id"), protocol="responses", error=obj.get("error"))
         choices = obj.get("choices")
         if isinstance(choices, list) and choices and isinstance(choices[0], dict):
             msg = choices[0].get("message")

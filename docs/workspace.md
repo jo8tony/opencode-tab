@@ -2,7 +2,7 @@
 
 ## 页面结构
 
-- 顶部主导航包含工作区、技能、OpenCode 终端、轨迹、调用列表、仪表盘和设置。「技能」位于「工作区」右侧，提供应用技能副本的管理。
+- 顶部主导航包含工作区、模型、技能、OpenCode 终端、轨迹、调用列表、仪表盘和设置。「模型」管理全局提供商及模型，「技能」管理应用技能副本。
 - 工作区左侧按项目显示 OpenCode 对话，项目列表默认折叠，点击项目标题展开；右侧显示对话、文件改动和活动。这里的“活动”汇总当前 OpenCode 对话的模型请求和工具步骤，顶部“轨迹”是代理录制的模型调用轨迹。
 - 项目目录继续保存在现有的 `terminal-projects.json`，这样旧版保存的项目会直接出现在新工作区。对话及消息由 OpenCode 自己持久化，本应用只记住本次页面访问选中的项目和对话。
 
@@ -47,3 +47,23 @@ OpenCode 服务只监听 `127.0.0.1`，使用每次启动随机生成的 HTTP Ba
 4. 加入大项目的服务进程空闲回收、历史消息分页与更完整的 Markdown 表格展示。
 
 参考：[OpenCode Server API](https://opencode.ai/docs/server/)、[OpenCode CLI](https://opencode.ai/docs/cli/)、[OpenCode 源码](https://github.com/anomalyco/opencode)。
+
+## 模型管理与两种 OpenAI 接口
+
+顶部「模型」页面独立管理应用提供商和手动模型，不依赖工作区项目或 OpenCode 服务启动。模型定义、真实密钥、应用默认模型和原生目录显示开关保存在应用配置；`GET /models/config` 仅返回密钥状态和 revision，`PUT /models/config` 使用 revision 防止覆盖其他页面的修改。省略 `api_key` 表示保留，空字符串表示清除。旧模型可保持未填写的限制；新增或修改模型必须填写正整数的 `context_length`、`output_length`。
+
+共享环境构造器把提供商编译成 `llmpr-<base64url-name>`，通过 `OPENCODE_CONFIG_CONTENT` 注入两个 V1 原生适配器、模型限制、modalities 与明确配置的 variants。模型 `provider.api` 决定实际 API 根地址，`provider.npm` 决定 Chat Completions 或 Responses；不能用模型 `options.apiKey` 覆盖 SDK 密钥。直连通过模型 headers 使用有效密钥，空凭据显式覆盖环境/认证回退；代理模式不把真实 Key 放进 OpenCode，而使用 `/managed/<provider-token>/<model-token>/…` 路由由应用注入有效 Key。路径令牌不含密钥，未知标识返回 404；原 `/up/{name}/…` 路由和默认上游保留。
+
+原生模型默认不显示；打开后按当前项目合并显示，其接口及路由保持原生行为。应用模型不可通过旧 OpenCode `/auth` 写入端点修改密钥。后台发送也校验模型是否仍存在、思考强度和附件是否支持，防止陈旧选择继续发送。
+
+未配置默认强度时注入 `reasoningEffort: null` 覆盖 OpenCode 根据模型名称推断的默认值，避免 GPT-5 等名称自动发送未配置的 `medium`；用户选择的 variant 或配置的默认档位再显式覆盖。
+
+Responses 解析在后台处理 `input`、`instructions`、function call/output、非流式 output 和 SSE 的文本/思考摘要/工具参数事件。两种接口统一记录输入/输出/缓存/思考 Token、TTFT、工具调用与完成/错误状态；未知 Responses 事件保存在 parsed metadata。`response_id` 与 `previous_response_id` 按提供商关联已有记录，会话头仍优先；父记录未捕获时展示历史不完整提示。原始请求/响应字节不做协议转换。
+
+原生兼容测试使用临时 XDG 目录及本地 mock 服务，不访问真实模型、不使用用户凭据：
+
+```bash
+OPENCODE_TEST_BINARIES=/path/to/opencode-1.18.18:/path/to/opencode-1.18.32 .venv/bin/python -m pytest tests/test_models_native.py -q
+```
+
+该测试读取每个运行版本的 `/doc`，验证 V1 路径，并实际执行直连和代理模式下的 Chat Completions、Responses、独立 Key、无 Key 和 reasoning effort 请求。界面检查截图属于 `.runtime/model-ui-check/`，不提交运行数据。

@@ -74,36 +74,18 @@ class TestResolve:
         for key in ("OPENAI_BASE_URL", "ANTHROPIC_BASE_URL", "OPENCODE_CONFIG_CONTENT"):
             monkeypatch.delenv(key, raising=False)
 
+        from llm_api_proxy_recorder.admin.models import native_provider_id
         cfg = make_cfg()
+        cfg.upstreams[0].models = [UpstreamModelConfig(id="one")]
         env = _build_env(cfg, "opencode")
         assert env["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
-        assert env["OPENAI_BASE_URL"] == "http://127.0.0.1:8117"
-        assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8117"
-        assert json.loads(env["OPENCODE_CONFIG_CONTENT"])["provider"]["main"]["options"]["baseURL"] == "http://127.0.0.1:8117"
-        # keep 策略不注入占位 key
-        assert "OPENAI_API_KEY" not in env or env["OPENAI_API_KEY"] != "proxy-managed"
-
-        # replace 策略注入占位 key
-        cfg2 = AppConfig(
-            upstreams=[
-                UpstreamConfig(name="main", base_url="http://127.0.0.1:9001", key_strategy="replace")
-            ],
-            default_upstream="main",
-        )
-        env2 = _build_env(cfg2, "opencode")
-        assert env2["OPENAI_API_KEY"] == "proxy-managed"
-
-        # 命名上游走 /up/{name} 前缀
-        cfg3 = make_cfg(proxy_upstream="main")
-        env3 = _build_env(cfg3, "opencode")
-        assert env3["OPENAI_BASE_URL"] == "http://127.0.0.1:8117/up/main"
-        cfg3.terminal.opencode_provider = "deepseek"
-        assert json.loads(_build_env(cfg3, "opencode")["OPENCODE_CONFIG_CONTENT"])["provider"]["deepseek"]["options"]["baseURL"] == "http://127.0.0.1:8117/up/main"
-
-        # 关闭联动不注入
-        env4 = _build_env(make_cfg(route_through_proxy=False), "opencode")
-        assert "OPENAI_BASE_URL" not in env4
-        assert "OPENCODE_CONFIG_CONTENT" not in env4
+        assert "OPENAI_BASE_URL" not in env
+        provider = json.loads(env["OPENCODE_CONFIG_CONTENT"])["provider"][native_provider_id("main")]
+        assert provider["models"]["one"]["provider"]["api"].startswith("http://127.0.0.1:8117/managed/")
+        assert provider["options"]["apiKey"] == ""
+        cfg.upstreams[0].route_through_proxy = False
+        direct = json.loads(_build_env(cfg, "opencode")["OPENCODE_CONFIG_CONTENT"])["provider"][native_provider_id("main")]
+        assert direct["models"]["one"]["provider"]["api"] == "http://127.0.0.1:9001"
 
         # shell 会话不注入代理变量
         env5 = _build_env(make_cfg(), "shell")
@@ -214,7 +196,8 @@ class TestResolve:
             default_upstream="private",
         )
         env = _build_env(cfg, "opencode")
-        provider = json.loads(env["OPENCODE_CONFIG_CONTENT"])["provider"]["private"]
+        from llm_api_proxy_recorder.admin.models import native_provider_id
+        provider = json.loads(env["OPENCODE_CONFIG_CONTENT"])["provider"][native_provider_id("private")]
         assert env["OPENCODE_DISABLE_MODELS_FETCH"] == "1"
         assert provider["npm"] == "@ai-sdk/openai-compatible"
         assert provider["models"]["text-only"]["attachment"] is False
@@ -223,8 +206,9 @@ class TestResolve:
             "input": ["text", "image", "pdf"], "output": ["text"],
         }
         assert "OPENCODE_DISABLE_MODELS_FETCH" not in _build_env(cfg, "shell")
-        cfg.terminal.route_through_proxy = False
-        assert "OPENCODE_CONFIG_CONTENT" not in _build_env(cfg, "opencode")
+        cfg.upstreams[0].route_through_proxy = False
+        direct = json.loads(_build_env(cfg, "opencode")["OPENCODE_CONFIG_CONTENT"])["provider"][native_provider_id("private")]
+        assert direct["models"]["vision"]["provider"]["api"] == "http://127.0.0.1:9001"
 
 
 # ------------------------------------------------------------------ REST + WS

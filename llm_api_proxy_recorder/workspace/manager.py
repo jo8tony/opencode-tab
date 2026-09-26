@@ -12,7 +12,7 @@ import subprocess
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator, Callable
+from typing import AsyncIterator, Awaitable, Callable
 
 import httpx
 
@@ -50,7 +50,8 @@ def _free_port() -> int:
 class WorkspaceManager:
     """One OpenCode service per project; sessions remain in OpenCode storage."""
 
-    def __init__(self) -> None:
+    def __init__(self, config_supplier: Callable[[], AppConfig] | None = None) -> None:
+        self._config_supplier = config_supplier
         self._servers: dict[str, OpenCodeServer] = {}
         self._lock = asyncio.Lock()
         self._skill_changes = asyncio.Lock()
@@ -61,6 +62,8 @@ class WorkspaceManager:
         if not Path(path).is_dir():
             raise WorkspaceError(f"项目目录不存在：{path}", 404)
         async with self._lock:
+            if self._config_supplier is not None:
+                config = self._config_supplier()
             existing = self._servers.get(path)
             if existing and existing.process.poll() is None:
                 return existing
@@ -158,10 +161,15 @@ class WorkspaceManager:
             raise WorkspaceError("OpenCode 返回了无法解析的数据", 502) from exc
 
     async def update_skills(self, operation: Callable[[], dict]) -> dict:
-        """Refresh native skill/command caches without interrupting active sessions."""
+        async def apply() -> dict:
+            return await asyncio.to_thread(operation)
+        return await self.update_configuration(apply, "技能")
+
+    async def update_configuration(self, operation: Callable[[], Awaitable[dict]], noun: str = "模型配置") -> dict:
+        """Serialize config changes with task preflight; recycle idle native caches."""
         async with self._skill_changes, self._lock:
             if self._task_requests:
-                raise WorkspaceError("工作区有任务正在运行，请任务结束后再修改技能", 409)
+                raise WorkspaceError(f"工作区有任务正在运行，请任务结束后再修改{noun}", 409)
             active = [(path, server) for path, server in self._servers.items()
                       if server.process.poll() is None]
             for path, server in active:
@@ -175,8 +183,8 @@ class WorkspaceManager:
                     raise WorkspaceError("无法确认 OpenCode 任务状态，请稍后重试", 503) from exc
                 if any(not isinstance(status, dict) or status.get("type") != "idle"
                        for status in statuses.values()):
-                    raise WorkspaceError("工作区有任务正在运行，请任务结束后再修改技能", 409)
-            result = await asyncio.to_thread(operation)
+                    raise WorkspaceError(f"工作区有任务正在运行，请任务结束后再修改{noun}：{path}", 409)
+            result = await operation()
             for path, server in active:
                 # Inline skills.paths is captured at process start. Recreate idle
                 # servers so imports/deletions also resolve duplicate sources afresh.

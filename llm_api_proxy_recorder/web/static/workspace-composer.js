@@ -97,11 +97,11 @@ function createWorkspaceComposer(input, createMention, createFileMention) {
     mention.setAttribute("draggable", "false");
   }
 
-  function insertFileReference(path, start, end) {
+  function insertFileReference(path, start, end, insertSeparator = true) {
     const mention = createFileMention(path);
     prepareMention(mention, `@${path}`, `引用文件 ${path}`);
     mention.dataset.filePath = path;
-    const space = /^\s/.test(value().slice(end)) ? "" : " ";
+    const space = !insertSeparator || /^\s/.test(value().slice(end)) ? "" : " ";
     input.focus();
     setSelectionRange(start, end);
     // Native editing keeps inserting, deleting and restoring references undoable.

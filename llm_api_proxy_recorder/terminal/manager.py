@@ -43,7 +43,6 @@ else:
     PtyProcess = None
 
 # 会话占位 API key：仅上游 key_strategy=replace 时注入（代理侧会替换真实 key）
-PLACEHOLDER_KEY = "proxy-managed"
 BUNDLED_OPENCODE_ENV = "LLMPR_BUNDLED_OPENCODE"
 ORIGINAL_XDG_PREFIX = "LLMPR_ORIGINAL_"
 XDG_KEYS = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME")
@@ -283,67 +282,31 @@ def _build_env(cfg: AppConfig, kind: str) -> dict[str, str]:
             env["OPENCODE_GIT_BASH_PATH"] = git_bash
         else:
             env.pop("OPENCODE_GIT_BASH_PATH", None)
-    if kind == "opencode" and t.route_through_proxy:
-        base = f"http://127.0.0.1:{cfg.server.port}"
-        if t.proxy_upstream:
-            base = f"{base}/up/{t.proxy_upstream}"
-            upstream_name = t.proxy_upstream
-        else:
-            upstream_name = cfg.default_upstream
-        env["OPENAI_BASE_URL"] = base
-        env["ANTHROPIC_BASE_URL"] = base
-        provider = t.opencode_provider.strip() or upstream_name
-        # OpenCode 的 provider 配置比通用环境变量更可靠；仅影响该终端进程，
-        # 不修改用户或项目目录下的 opencode.json。
+    env.update(t.inject_env)  # 用户配置可覆盖代理与目录注入
+    if kind == "opencode":
+        # 随应用发布的 OpenCode 必须由应用升级，禁止子进程自行替换版本。
+        env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
+    if kind == "opencode":
+        from llm_api_proxy_recorder.admin.models import compile_providers, native_provider_id
         try:
             inline = json.loads(env.get("OPENCODE_CONFIG_CONTENT") or "{}")
             if not isinstance(inline, dict):
                 inline = {}
         except ValueError:
             inline = {}
-        providers = inline.setdefault("provider", {})
-        if not isinstance(providers, dict):
-            providers = {}
+        managed = compile_providers(cfg)
+        if managed:
+            providers = inline.get("provider")
+            if not isinstance(providers, dict):
+                providers = {}
+            providers.update(managed)
             inline["provider"] = providers
-        entry = providers.setdefault(provider, {})
-        if not isinstance(entry, dict):
-            entry = {}
-            providers[provider] = entry
-        options = entry.setdefault("options", {})
-        if not isinstance(options, dict):
-            options = {}
-            entry["options"] = options
-        options["baseURL"] = base
-        up = next((u for u in cfg.upstreams if u.name == upstream_name), None)
-        if up is not None and up.models:
-            # 没有在线模型目录时也可从配置创建 provider 和模型。
-            # 当前手动模型按 OpenAI 兼容的 /chat/completions 接口调用。
-            entry.setdefault("npm", "@ai-sdk/openai-compatible")
-            models = entry.setdefault("models", {})
-            if not isinstance(models, dict):
-                models = {}
-                entry["models"] = models
-            for model in up.models:
-                model_entry = models.setdefault(model.id, {})
-                if not isinstance(model_entry, dict):
-                    model_entry = {}
-                    models[model.id] = model_entry
-                model_entry.setdefault("name", model.id)
-                model_entry["attachment"] = bool(model.input_modalities)
-                model_entry["modalities"] = {
-                    "input": ["text", *model.input_modalities], "output": ["text"]
-                }
             env["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
-        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(inline, ensure_ascii=False)
-        if up is not None and up.key_strategy == "replace":
-            # 代理侧会注入真实 key，这里给占位值让 opencode 的 provider 校验通过
-            env.setdefault("OPENAI_API_KEY", PLACEHOLDER_KEY)
-            env.setdefault("ANTHROPIC_API_KEY", PLACEHOLDER_KEY)
-    env.update(t.inject_env)  # 用户配置可覆盖代理与目录注入
-    if kind == "opencode":
-        # 随应用发布的 OpenCode 必须由应用升级，禁止子进程自行替换版本。
-        env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
-    if kind == "opencode":
+        choice = cfg.model_settings.default_model
+        if choice:
+            inline["model"] = f"{native_provider_id(choice.provider)}/{choice.model}"
+        if inline:
+            env["OPENCODE_CONFIG_CONTENT"] = json.dumps(inline, ensure_ascii=False)
         from llm_api_proxy_recorder.admin.skills import SkillStore
         store = SkillStore()
         try:

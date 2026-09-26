@@ -5,10 +5,13 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 CONFIG_PATH = os.path.expanduser("~/.llm-api-proxy-recorder/config.json")
+ApiType = Literal["chat_completions", "responses"]
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
 class ServerConfig(BaseModel):
@@ -26,8 +29,24 @@ class ServerConfig(BaseModel):
 
 class UpstreamModelConfig(BaseModel):
     id: str
+    display_name: str = ""
+    api_key: str = ""
+    api_type: ApiType | None = None
+    context_length: int | None = Field(default=None, gt=0)
+    output_length: int | None = Field(default=None, gt=0)
+    reasoning: bool = False
+    reasoning_efforts: list[ReasoningEffort] = Field(default_factory=list)
+    default_effort: ReasoningEffort | None = None
+    tool_call: bool = True
     # text 始终可输入；其余输入模态按模型能力显式开启。
     input_modalities: list[Literal["image", "audio", "video", "pdf"]] = Field(default_factory=list)
+
+    @field_validator("api_key")
+    @classmethod
+    def _api_key_header_safe(cls, value: str) -> str:
+        if "\r" in value or "\n" in value:
+            raise ValueError("API Key 不能包含换行")
+        return value.strip()
 
     @field_validator("id")
     @classmethod
@@ -42,22 +61,42 @@ class UpstreamModelConfig(BaseModel):
     def _unique_modalities(cls, values: list[str]) -> list[str]:
         return list(dict.fromkeys(values))
 
+    @model_validator(mode="after")
+    def _check_reasoning(self) -> "UpstreamModelConfig":
+        self.reasoning_efforts = list(dict.fromkeys(self.reasoning_efforts))
+        if self.reasoning_efforts and not self.reasoning:
+            raise ValueError("配置思考强度前必须开启支持思考")
+        if self.default_effort and self.default_effort not in self.reasoning_efforts:
+            raise ValueError("默认思考强度必须属于支持的档位")
+        return self
+
 
 class UpstreamConfig(BaseModel):
     name: str
+    display_name: str = ""
     base_url: str
     api_key: str = ""
+    api_type: ApiType = "chat_completions"
+    route_through_proxy: bool = True
     # Web 终端 OpenCode 手动模型及其输入能力。
     models: list[UpstreamModelConfig] = Field(default_factory=list)
     extra_headers: dict[str, str] = Field(default_factory=dict)
     # 默认 keep：完全透明透传客户端凭据头；显式配置 replace 才注入上游 key
     key_strategy: Literal["replace", "keep"] = "keep"
 
+    @field_validator("api_key")
+    @classmethod
+    def _api_key_header_safe(cls, value: str) -> str:
+        return UpstreamModelConfig._api_key_header_safe(value)
+
     @field_validator("base_url")
     @classmethod
     def _base_url_scheme(cls, v: str) -> str:
-        if not (v.startswith("http://") or v.startswith("https://")):
-            raise ValueError("base_url 必须以 http:// 或 https:// 开头")
+        parsed = urlsplit(v)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("base_url 必须是有效的 http/https 地址")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("base_url 不支持内嵌凭据、查询参数或片段")
         return v
 
     @model_validator(mode="after")
@@ -142,6 +181,16 @@ class TerminalConfig(BaseModel):
         return self
 
 
+class ModelChoice(BaseModel):
+    provider: str
+    model: str
+
+
+class ModelSettings(BaseModel):
+    default_model: ModelChoice | None = None
+    show_native_models: bool = False
+
+
 class AppConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     upstreams: list[UpstreamConfig]
@@ -149,16 +198,33 @@ class AppConfig(BaseModel):
     outbound: OutboundConfig = Field(default_factory=OutboundConfig)
     recording: RecordingConfig = Field(default_factory=RecordingConfig)
     terminal: TerminalConfig = Field(default_factory=TerminalConfig)
+    model_settings: ModelSettings = Field(default_factory=ModelSettings)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_provider_routes(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            value = dict(value)
+            terminal = value.get("terminal", {})
+            if isinstance(terminal, dict):
+                route = terminal.get("route_through_proxy", True)
+                value["upstreams"] = [
+                    {"route_through_proxy": route, **u} if isinstance(u, dict) else u
+                    for u in value.get("upstreams", [])
+                ]
+        return value
 
     @model_validator(mode="after")
     def _check_upstreams(self) -> "AppConfig":
-        if not self.upstreams:
-            raise ValueError("upstreams 至少需要 1 个")
         names = [u.name for u in self.upstreams]
         if len(names) != len(set(names)):
             raise ValueError("上游名称必须唯一")
-        if self.default_upstream not in names:
+        if self.default_upstream not in names and (names or self.default_upstream):
             raise ValueError(f"default_upstream '{self.default_upstream}' 不在 upstreams 名称中")
+        choice = self.model_settings.default_model
+        if choice and not any(u.name == choice.provider and any(m.id == choice.model for m in u.models)
+                              for u in self.upstreams):
+            raise ValueError("默认模型不存在，请重新选择")
         return self
 
 

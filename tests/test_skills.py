@@ -206,6 +206,7 @@ async def test_idle_server_restart_fallback_when_dispose_is_unsupported(tmp_path
 def test_management_api_and_native_skill_commands(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     app = create_app(default_config(), str(tmp_path / "proxy.json"))
+    app.state.runtime.config.model_settings.show_native_models = True
     source = make_skill(tmp_path / "user")
     calls = []
 
@@ -255,6 +256,7 @@ def test_management_api_and_native_skill_commands(tmp_path, monkeypatch):
 def test_native_name_collisions_do_not_invoke_another_skill_or_command(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     app = create_app(default_config(), str(tmp_path / "proxy.json"))
+    app.state.runtime.config.model_settings.show_native_models = True
     source = make_skill(tmp_path / "user")
     installed = app.state.runtime.skills.add(str(source))
     native = {"source": "skill", "location": str(tmp_path / "project/.opencode/skills/code-review/SKILL.md")}
@@ -377,6 +379,7 @@ def test_agent_specific_skill_denial_blocks_picker_and_command(tmp_path, monkeyp
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("LLMPR_ORIGINAL_XDG_CONFIG_HOME", str(tmp_path / "original"))
     app = create_app(default_config(), str(tmp_path / "proxy.json"))
+    app.state.runtime.config.model_settings.show_native_models = True
     skill = app.state.runtime.skills.add(str(make_skill(tmp_path / "user")))
     invoked = []
     async def request(project, config, method, endpoint, **kwargs):
@@ -448,6 +451,7 @@ def test_project_native_skills_keep_selection_and_manual_history(tmp_path, monke
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("LLMPR_ORIGINAL_XDG_CONFIG_HOME", str(tmp_path / "original"))
     app = create_app(default_config(), str(tmp_path / "proxy.json"))
+    app.state.runtime.config.model_settings.show_native_models = True
     skill = make_skill(tmp_path / "project/.opencode/skills", "project-review")
     calls = []
     async def request(project, config, method, endpoint, *, body=None, **kwargs):

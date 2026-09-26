@@ -15,7 +15,7 @@ function el(tag, attrs, ...children) {
       else if (k === "text") node.textContent = v;
       else if (k === "value") node.value = v;
       else if (k === "checked") node.checked = !!v;
-      else if (k === "disabled") node.disabled = !!v;
+      else if (["disabled", "hidden", "open", "readOnly"].includes(k)) node[k] = !!v;
       else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
       else node.setAttribute(k, String(v));
     }
@@ -202,6 +202,7 @@ function runCleanups() {
 
 const routes = [
   { re: /^#\/workspace$/, nav: "workspace", render: (view) => renderWorkspace(view) },
+  { re: /^#\/models$/, nav: "models", render: (view) => renderModels(view) },
   { re: /^#\/skills$/, nav: "skills", render: (view) => renderSkills(view) },
   { re: /^#\/dashboard$/, nav: "dashboard", render: (view) => renderDashboard(view) },
   { re: /^#\/calls$/, nav: "calls", render: (view) => renderCalls(view) },
@@ -228,7 +229,7 @@ function route() {
     if (m) {
       document.body.classList.toggle("workspace-route", r.nav === "workspace");
       setNav(r.nav);
-      document.title = "Sona Code · " + ({ workspace: "工作区", skills: "技能", dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", terminal: "终端", settings: "设置" }[r.nav] || "");
+      document.title = "Sona Code · " + ({ workspace: "工作区", models: "模型", skills: "技能", dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", terminal: "终端", settings: "设置" }[r.nav] || "");
       r.render(view, m);
       return;
     }
@@ -501,6 +502,20 @@ function renderContent(content) {
       if (parsed !== undefined) return jsonViewer(parsed);
     }
     return el("pre", { class: "pre-block", text: content });
+  }
+  if (content && typeof content === "object" && Array.isArray(content.output)) {
+    const box = el("div", { class: "content-box" });
+    content.output.forEach((item) => {
+      if (item.type === "message") (item.content || []).forEach((part) => {
+        if (part.text || part.refusal) box.append(_block(part.refusal ? "拒绝原因" : "回复内容", part.text || part.refusal, "pre-content"));
+      });
+      else if (item.type === "reasoning") (item.summary || []).forEach((part) => {
+        if (part.text) box.append(_block("思考摘要", part.text, "pre-reason"));
+      });
+      else if (item.type === "function_call") box.append(_block(`工具调用 ${item.name || ""}`, item.arguments || ""));
+      else box.append(jsonViewer(item));
+    });
+    return box.childNodes.length ? box : jsonViewer(content);
   }
   const box = el("div", { class: "content-box" });
   if (content && typeof content === "object" && Array.isArray(content.choices)) {

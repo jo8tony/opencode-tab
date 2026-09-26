@@ -98,6 +98,9 @@ class CallStore:
                 "session_key": rec.get("session_key"),
                 "preview": first_user_preview(req_parsed.get("messages")),
             }
+            for key in ("protocol", "response_id", "previous_response_id", "history_incomplete"):
+                if rec.get(key) is not None:
+                    line[key] = rec[key]
             date = self._date_of(rec)
             self.index_dir.mkdir(parents=True, exist_ok=True)
             with open(self.index_dir / f"{date}.jsonl", "a", encoding="utf-8") as f:
@@ -106,6 +109,18 @@ class CallStore:
             logger.warning("finalize 记录失败 id=%s", rec.get("id"), exc_info=True)
 
     # ------------------------------------------------------------------ read
+    def find_response(self, response_id: str, upstream_name: str) -> dict | None:
+        """Resolve captured Responses chains in the background, scoped to provider."""
+        for date in self.available_dates():
+            try:
+                rows = self.read_index(date)
+            except (OSError, ValueError):
+                continue
+            for row in reversed(rows):
+                if row.get("response_id") == response_id and row.get("upstream_name") == upstream_name:
+                    return self.load_call(row["id"], date)
+        return None
+
     def load_call(self, call_id: str, date: str | None = None) -> dict | None:
         """读取单条记录；无 date 时扫描所有日期目录。"""
         if date is not None:

@@ -13,7 +13,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from llm_api_proxy_recorder import __version__
-from llm_api_proxy_recorder.config import AppConfig, resolved_records_dir, save_config
+from llm_api_proxy_recorder.admin.models import public_config
+from llm_api_proxy_recorder.config import AppConfig, resolved_records_dir
 from llm_api_proxy_recorder.admin.opencode_config import (
     import_global_config,
     preview_global_import,
@@ -313,6 +314,9 @@ def trajectory_session_detail(key: str, request: Request, q: str | None = Query(
 
         turns.append(
             {
+                "protocol": rec.get("protocol"),
+                "history_incomplete": rec.get("history_incomplete", False),
+                "previous_response_id": rec.get("previous_response_id"),
                 "turn_no": len(turns) + 1,
                 "call_id": rec.get("id"),
                 "started_at": rec.get("started_at"),
@@ -368,8 +372,10 @@ def trajectory_session_detail(key: str, request: Request, q: str | None = Query(
 @router.get("/settings")
 def get_settings(request: Request) -> dict:
     cfg: AppConfig = request.app.state.runtime.config
+    data = public_config(cfg)
+    data["server"] = request.app.state.runtime.pending_server.model_dump()
     return {
-        "config": cfg.model_dump(),
+        "config": data,
         "config_path": request.app.state.config_path,
         "records_dir": str(resolved_records_dir(cfg)),
         "restart_fields": RESTART_FIELDS,
@@ -377,14 +383,36 @@ def get_settings(request: Request) -> dict:
 
 
 @router.put("/settings")
-async def put_settings(new_cfg: AppConfig, request: Request) -> dict:
+async def put_settings(new_cfg: dict, request: Request) -> dict:
+    from llm_api_proxy_recorder.admin.models import merge_providers, validate_config
+    from llm_api_proxy_recorder.admin.model_routes import commit_config
+    from llm_api_proxy_recorder.workspace.manager import WorkspaceError
+
     runtime = request.app.state.runtime
-    save_config(new_cfg, request.app.state.config_path)
-    # server 段不同则需重启（已持久化但不热应用）
-    restart_required = new_cfg.server != runtime.config.server
-    await runtime.apply_config(new_cfg)
-    request.app.state.config = new_cfg  # 兼容旧引用
-    return {"ok": True, "restart_required": restart_required}
+    async with runtime.config_lock:
+        async def apply() -> dict:
+            data = runtime.config.model_dump()
+            for section in ("server", "outbound", "recording", "terminal", "model_settings"):
+                if section in new_cfg:
+                    if not isinstance(new_cfg[section], dict):
+                        raise HTTPException(422, "配置段必须是对象")
+                    updates = dict(new_cfg[section])
+                    if section == "terminal" and isinstance(updates.get("inject_env"), dict):
+                        updates["inject_env"] = {k: data["terminal"]["inject_env"].get(k, "") if v == "[REDACTED]" else v
+                                                 for k, v in updates["inject_env"].items()}
+                    data[section].update(updates)
+            if "upstreams" in new_cfg:
+                if not isinstance(new_cfg["upstreams"], list):
+                    raise HTTPException(422, "提供商必须是列表")
+                data["upstreams"] = merge_providers(new_cfg["upstreams"], runtime.config)
+            if "default_upstream" in new_cfg:
+                data["default_upstream"] = new_cfg["default_upstream"]
+            result = await commit_config(request, validate_config(data), server_explicit="server" in new_cfg)
+            return {"ok": result["ok"], "restart_required": result["restart_required"]}
+        try:
+            return await runtime.workspace.update_configuration(apply, "设置")
+        except WorkspaceError as exc:
+            raise HTTPException(exc.status, exc.detail) from None
 
 
 @router.get("/settings/opencode-config")

@@ -9,6 +9,7 @@ from __future__ import annotations
 import codecs
 import json
 from typing import Any
+from llm_api_proxy_recorder.recording.responses import ResponsesAccumulator
 
 
 def extract_usage(u: dict) -> dict:
@@ -16,20 +17,20 @@ def extract_usage(u: dict) -> dict:
     prompt_tokens_details.cached_tokens 与 DeepSeek 的 prompt_cache_hit_tokens；
     reasoning_tokens 兼容 completion_tokens_details.reasoning_tokens 与 reasoning_tokens。"""
     cached = None
-    details = u.get("prompt_tokens_details")
+    details = u.get("prompt_tokens_details") or u.get("input_tokens_details")
     if isinstance(details, dict) and details.get("cached_tokens") is not None:
         cached = details.get("cached_tokens")
     elif u.get("prompt_cache_hit_tokens") is not None:
         cached = u.get("prompt_cache_hit_tokens")
     reasoning = None
-    cdetails = u.get("completion_tokens_details")
+    cdetails = u.get("completion_tokens_details") or u.get("output_tokens_details")
     if isinstance(cdetails, dict) and cdetails.get("reasoning_tokens") is not None:
         reasoning = cdetails.get("reasoning_tokens")
     elif u.get("reasoning_tokens") is not None:
         reasoning = u.get("reasoning_tokens")
     return {
-        "prompt_tokens": u.get("prompt_tokens"),
-        "completion_tokens": u.get("completion_tokens"),
+        "prompt_tokens": u.get("prompt_tokens", u.get("input_tokens")),
+        "completion_tokens": u.get("completion_tokens", u.get("output_tokens")),
         "total_tokens": u.get("total_tokens"),
         "cached_tokens": cached,
         "reasoning_tokens": reasoning,
@@ -38,6 +39,8 @@ def extract_usage(u: dict) -> dict:
 
 class SSEParser:
     def __init__(self) -> None:
+        self.responses: ResponsesAccumulator | None = None
+        self._event_name = ""
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self._line_buf = ""
         self._data_lines: list[str] = []
@@ -75,9 +78,12 @@ class SSEParser:
             if self._data_lines:
                 self._handle_event("\n".join(self._data_lines))
                 self._data_lines = []
+            self._event_name = ""
             return
         if line.startswith(":"):  # 注释行
             return
+        if line.startswith("event:"):
+            self._event_name = line[6:].strip()
         if line.startswith("data:"):  # 容忍 data: 与 data:
             payload = line[5:]
             if payload.startswith(" "):
@@ -99,6 +105,21 @@ class SSEParser:
                 self.parse_error = f"JSON 解析失败: {e}; data[:80]={data[:80]!r}"
             return
         self.chunk_count += 1
+        kind = obj.get("type") or self._event_name
+        if isinstance(kind, str) and (kind.startswith("response.") or (kind == "error" and self.responses)):
+            obj.setdefault("type", kind)
+            if self.responses is None:
+                self.responses = ResponsesAccumulator()
+            delta, response_usage = self.responses.consume(obj)
+            if response_usage:
+                self.usage = extract_usage(response_usage)
+            if delta and not self.saw_first_delta:
+                self.saw_first_delta = True
+                self.first_delta_char_offset = self._consumed_chars
+            if kind in {"response.completed", "response.failed", "response.incomplete", "error"}:
+                self.saw_done = True
+                self.finish_reason = self.responses.status or kind.split(".")[-1]
+            return
         usage = obj.get("usage")
         if isinstance(usage, dict) and usage:
             self.usage = extract_usage(usage)
@@ -162,6 +183,8 @@ class SSEParser:
     def assembled_message(self) -> dict | None:
         """组装为 assistant 消息 dict；仅含有值字段；全空返回 None。
         finish_reason 属响应元数据，不混入消息体（由调用方单独取）。"""
+        if self.responses is not None:
+            return self.responses.message()
         msg: dict[str, Any] = {"role": "assistant"}
         if self.reasoning_text:
             msg["reasoning_content"] = self.reasoning_text

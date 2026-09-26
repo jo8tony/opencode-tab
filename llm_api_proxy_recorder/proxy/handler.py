@@ -85,6 +85,12 @@ def _build_forward_headers(request: Request, upstream: UpstreamConfig) -> list[t
     for ek, ev in upstream.extra_headers.items():
         headers = [(k, v) for k, v in headers if k.lower() != ek.lower()]
         headers.append((ek, ev))
+    if request.url.path.startswith("/managed/"):
+        # Managed traffic has deterministic credentials; never forward a native
+        # placeholder, client credential or legacy auth header to the upstream.
+        headers = [(k, v) for k, v in headers if k.lower() not in {"authorization", "x-api-key", "api-key"}]
+        if upstream.api_key:
+            headers.append(("authorization", f"Bearer {upstream.api_key}"))
     return headers
 
 
@@ -131,6 +137,8 @@ def _process_and_finalize(store: CallStore, record: CallRecord, ctx: dict) -> No
     req_parsed = parse_request_body(record.request.body)
     if req_parsed is not None:
         record.request.parsed = ParsedRequestInfo(**req_parsed)
+        record.protocol = req_parsed.get("protocol") or "chat_completions"
+        record.previous_response_id = req_parsed.get("previous_response_id")
         if req_parsed["model"]:
             record.model = req_parsed["model"]
         record.stream = req_parsed["stream"]
@@ -171,7 +179,21 @@ def _process_and_finalize(store: CallStore, record: CallRecord, ctx: dict) -> No
             )
         if rc.record_raw_chunks:
             r.raw_chunks = chunks_to_raw_texts(chunks)
+        if parser.responses:
+            record.protocol = "responses"
+            record.response_id = parser.responses.response_id
+            if not parser.saw_done and not r.body_truncated:
+                parser.parse_error = parser.parse_error or "Responses stream ended without a terminal event"
+                if record.error is None:
+                    record.error = ErrorInfo(type="responses_incomplete_stream", message=parser.parse_error)
+                if ctx["status"] == "ok":
+                    ctx["status"] = "error"
+            if parser.responses.error or parser.responses.status == "failed":
+                record.error = ErrorInfo(type="responses_error", message=str((parser.responses.error or {}).get("message", "Responses 请求失败")))
+                ctx["status"] = "error"
         r.parsed = ParsedResponseInfo(
+            protocol=record.protocol, response_id=record.response_id,
+            unknown_events=parser.responses.unknown_events if parser.responses else None,
             message=r.content,
             finish_reason=parser.finish_reason,
             parse_error=parser.parse_error,
@@ -195,10 +217,31 @@ def _process_and_finalize(store: CallStore, record: CallRecord, ctx: dict) -> No
         r.chunk_count = ctx.get("net_chunk_count") or len(chunks)
         r.content = res["content"]
         record.usage = UsageInfo(**res["usage"]) if res["usage"] else None
+        record.response_id = res.get("response_id")
+        record.protocol = res.get("protocol") or record.protocol
+        if res.get("error") or (record.protocol == "responses" and res.get("finish_reason") == "failed"):
+            record.error = ErrorInfo(type="responses_error", message=str((res.get("error") or {}).get("message", "Responses 请求失败")))
+            ctx["status"] = "error"
         r.parsed = ParsedResponseInfo(
+            protocol=record.protocol, response_id=record.response_id,
             message=res["message"], finish_reason=res["finish_reason"], parse_error=None
         )
 
+    if record.previous_response_id:
+        parent = store.find_response(record.previous_response_id, record.upstream_name)
+        if parent and record.request.parsed:
+            previous_messages = ((parent.get("request") or {}).get("parsed") or {}).get("messages") or []
+            previous_reply = ((parent.get("response") or {}).get("parsed") or {}).get("message")
+            current_messages = record.request.parsed.messages or []
+            if (previous_messages and current_messages and current_messages[0].get("role") == "system"
+                    and current_messages[0] == previous_messages[0]):
+                current_messages = current_messages[1:]
+            record.request.parsed.messages = [*previous_messages, *([previous_reply] if previous_reply else []), *current_messages]
+            if not header_key:
+                record.session_key = parent.get("session_key") or record.session_key
+            record.history_incomplete = bool(parent.get("history_incomplete"))
+        else:
+            record.history_incomplete = True
     record.status = ctx["status"]
     store.finalize(record.model_dump())
 

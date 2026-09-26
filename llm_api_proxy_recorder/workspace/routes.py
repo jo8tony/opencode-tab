@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from llm_api_proxy_recorder.admin.skills import WORKSPACE_COMMANDS
 from llm_api_proxy_recorder.terminal.manager import resolve_opencode
+from llm_api_proxy_recorder.admin.models import application_catalog, public_native_catalog, native_provider_id
 from llm_api_proxy_recorder.workspace.manager import WorkspaceError
 
 router = APIRouter()
@@ -55,9 +56,37 @@ async def _opencode(
     body: dict | None = None, params: dict[str, str | int] | None = None,
 ):
     try:
-        return await request.app.state.runtime.workspace.request(
-            project, request.app.state.runtime.config, method, endpoint, body=body, params=params,
-        )
+        runtime = request.app.state.runtime
+        if method == "POST" and endpoint.endswith(("/prompt_async", "/command", "/shell", "/summarize")):
+            async with runtime.workspace.task_dispatch():
+                body = dict(body or {})
+                selected = body.get("model")
+                provider_id, model_id = None, None
+                if isinstance(selected, dict):
+                    provider_id, model_id = selected.get("providerID"), selected.get("modelID")
+                elif isinstance(selected, str):
+                    provider_id, _, model_id = selected.partition("/")
+                elif endpoint.endswith("/summarize"):
+                    provider_id, model_id = body.get("providerID"), body.get("modelID")
+                choice = _model_choice(provider_id, model_id, request, body.get("variant"))
+                if choice:
+                    if endpoint.endswith("/summarize"):
+                        body.update(choice)
+                    else:
+                        body["model"] = f"{choice['providerID']}/{choice['modelID']}" if endpoint.endswith("/command") else choice
+                    provider = next((p for p in runtime.config.upstreams if native_provider_id(p.name) == choice["providerID"]), None)
+                    model = next((m for m in provider.models if m.id == choice["modelID"]), None) if provider else None
+                    if model:
+                        for part in body.get("parts", []):
+                            mime = part.get("mime", "")
+                            required = "image" if mime.startswith("image/") else "pdf" if mime == "application/pdf" else None
+                            if required and required not in model.input_modalities:
+                                raise HTTPException(400, "所选模型不支持该附件类型")
+                return await runtime.workspace.request(
+                    project, runtime.config, method, endpoint, body=body, params=params)
+        return await runtime.workspace.request(
+            project, runtime.config, method, endpoint, body=body, params=params)
+
     except WorkspaceError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
 
@@ -225,6 +254,30 @@ class RevertMessageBody(BaseModel):
     part_id: str | None = None
 
 
+@router.post("/workspace/projects/{project_id}/sessions/{session_id}/withdraw")
+async def withdraw_turn(project_id: str, session_id: str, body: RevertMessageBody, request: Request):
+    """Delete the latest user turn through V1, preserving project file changes."""
+    path = _project_path(request, project_id)
+    session = _safe_id(session_id)
+    message_id = _safe_id(body.message_id)
+    statuses = await _opencode(request, path, "GET", "/session/status")
+    if statuses.get(session_id, {}).get("type", "idle") != "idle":
+        raise HTTPException(409, "请先停止任务或等待任务结束，再撤回消息")
+    messages = await _opencode(request, path, "GET", f"/session/{session}/message")
+    index = next((i for i in range(len(messages) - 1, -1, -1)
+                  if messages[i].get("info", {}).get("role") == "user"
+                  and not any(part.get("type") == "compaction"
+                              for part in messages[i].get("parts", []))), None)
+    if index is None or messages[index]["info"]["id"] != message_id:
+        raise HTTPException(409, "只能撤回最后一轮用户消息，请刷新对话后重试")
+    # Keep the user boundary until every reply is removed so a failed deletion
+    # can be retried. Native delete rejects busy sessions and removes all parts.
+    for message in reversed(messages[index:]):
+        await _opencode(request, path, "DELETE",
+                        f"/session/{session}/message/{_safe_id(message['info']['id'])}")
+    return {"ok": True}
+
+
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/revert")
 async def revert_message(project_id: str, session_id: str, body: RevertMessageBody, request: Request):
     path = _project_path(request, project_id)
@@ -249,7 +302,7 @@ class SummarizeSessionBody(BaseModel):
 async def summarize_session(project_id: str, session_id: str, body: SummarizeSessionBody, request: Request):
     path = _project_path(request, project_id)
     return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/summarize",
-                           {"providerID": body.provider_id, "modelID": body.model_id})
+                           _model_choice(body.provider_id, body.model_id, request))
 
 
 @router.get("/workspace/projects/{project_id}/status")
@@ -261,12 +314,21 @@ async def project_status(project_id: str, request: Request):
 @router.get("/workspace/projects/{project_id}/models")
 async def project_models(project_id: str, request: Request):
     path = _project_path(request, project_id)
-    data = await _opencode(request, path, "GET", "/config/providers")
-    auth = await _opencode(request, path, "GET", "/provider")
-    return {
-        **(data if isinstance(data, dict) else {}),
-        "connected": auth.get("connected", []) if isinstance(auth, dict) else [],
-    }
+    cfg = request.app.state.runtime.config
+    providers = application_catalog(cfg)
+    connected = []
+    if cfg.model_settings.show_native_models:
+        data = await _opencode(request, path, "GET", "/config/providers")
+        auth = await _opencode(request, path, "GET", "/provider")
+        providers.extend(public_native_catalog(data))
+        connected = auth.get("connected", []) if isinstance(auth, dict) else []
+    choice = cfg.model_settings.default_model
+    default = {"providerID": native_provider_id(choice.provider), "modelID": choice.model} if choice else None
+    if not default and providers and providers[0]["models"]:
+        default = {"providerID": providers[0]["id"], "modelID": next(iter(providers[0]["models"]))}
+    return {"providers": providers, "connected": connected, "default_model": default,
+            "show_native_models": cfg.model_settings.show_native_models}
+
 
 
 class ProviderApiKeyBody(BaseModel):
@@ -275,6 +337,8 @@ class ProviderApiKeyBody(BaseModel):
 
 @router.post("/workspace/projects/{project_id}/providers/{provider_id}/api-key")
 async def save_provider_api_key(project_id: str, provider_id: str, body: ProviderApiKeyBody, request: Request):
+    if provider_id.startswith("llmpr-"):
+        raise HTTPException(409, "应用提供商密钥请在模型页面管理")
     path = _project_path(request, project_id)
     await _opencode(request, path, "PUT", f"/auth/{_safe_id(provider_id)}", {"type": "api", "key": body.key})
     return {"ok": True, "provider_id": provider_id, "configured": True}
@@ -374,10 +438,33 @@ def _prompt_file_part(file: PromptFile) -> tuple[dict, int]:
     return {"type": "file", "filename": file.filename, "mime": file.mime, "url": file.url}, len(decoded)
 
 
-def _model_choice(provider_id: str | None, model_id: str | None) -> dict | None:
-    if provider_id and model_id:
-        return {"providerID": provider_id, "modelID": model_id}
-    return None
+def _model_choice(provider_id: str | None, model_id: str | None, request: Request,
+                  variant: str | None = None) -> dict | None:
+    cfg = request.app.state.runtime.config
+    if bool(provider_id) != bool(model_id):
+        raise HTTPException(400, "请选择完整的提供商与模型")
+    if not provider_id:
+        choice = cfg.model_settings.default_model
+        if choice:
+            provider_id, model_id = native_provider_id(choice.provider), choice.model
+        else:
+            first = next((p for p in cfg.upstreams if p.models), None)
+            if first:
+                provider_id, model_id = native_provider_id(first.name), first.models[0].id
+            elif cfg.model_settings.show_native_models:
+                return None
+            else:
+                raise HTTPException(409, "暂无可用模型，请前往模型页面添加模型")
+    provider = next((p for p in cfg.upstreams if native_provider_id(p.name) == provider_id), None)
+    if provider:
+        model = next((m for m in provider.models if m.id == model_id), None)
+        if not model:
+            raise HTTPException(409, "所选模型已删除，请重新选择")
+        if variant and variant not in model.reasoning_efforts:
+            raise HTTPException(400, "该模型不支持所选思考强度")
+    elif provider_id.startswith("llmpr-") or not cfg.model_settings.show_native_models:
+        raise HTTPException(409, "所选提供商不可用，请重新选择模型")
+    return {"providerID": provider_id, "modelID": model_id}
 
 
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/prompt")
@@ -416,7 +503,7 @@ async def send_prompt(project_id: str, session_id: str, body: PromptBody, reques
             "url": candidate.as_uri(),
         })
     prompt: dict = {"parts": parts}
-    model = _model_choice(body.provider_id, body.model_id)
+    model = _model_choice(body.provider_id, body.model_id, request, getattr(body, "variant", None))
     if model:
         prompt["model"] = model
     if body.agent:
@@ -463,8 +550,9 @@ async def run_command(project_id: str, session_id: str, body: CommandBody, reque
             payload["messageID"] = message_id
             await asyncio.to_thread(request.app.state.runtime.skills.record_use,
                                     path, session_id, message_id, managed, body.arguments)
-        if body.provider_id and body.model_id:
-            payload["model"] = f"{body.provider_id}/{body.model_id}"
+        model = _model_choice(body.provider_id, body.model_id, request, body.variant)
+        if model:
+            payload["model"] = f"{model['providerID']}/{model['modelID']}"
         if body.agent:
             payload["agent"] = body.agent
         if body.variant:
@@ -554,7 +642,7 @@ class ShellBody(BaseModel):
 async def run_shell(project_id: str, session_id: str, body: ShellBody, request: Request):
     path = _project_path(request, project_id)
     payload: dict = {"command": body.command, "agent": body.agent}
-    model = _model_choice(body.provider_id, body.model_id)
+    model = _model_choice(body.provider_id, body.model_id, request, getattr(body, "variant", None))
     if model:
         payload["model"] = model
     return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/shell", payload)
