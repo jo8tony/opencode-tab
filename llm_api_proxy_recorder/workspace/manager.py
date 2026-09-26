@@ -11,7 +11,7 @@ import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 import httpx
 
@@ -52,6 +52,8 @@ class WorkspaceManager:
     def __init__(self) -> None:
         self._servers: dict[str, OpenCodeServer] = {}
         self._lock = asyncio.Lock()
+        self._skill_changes = asyncio.Lock()
+        self._task_requests = 0
 
     async def ensure(self, project: str, config: AppConfig) -> OpenCodeServer:
         path = str(Path(project).expanduser().resolve())
@@ -116,6 +118,20 @@ class WorkspaceManager:
         self, project: str, config: AppConfig, method: str, endpoint: str,
         *, body: dict | None = None, params: dict[str, str | int] | None = None,
     ) -> object:
+        # Exclude skill changes during task dispatch while keeping project tasks parallel.
+        if method == "POST" and endpoint.endswith(("/prompt_async", "/command", "/shell", "/summarize")):
+            async with self._skill_changes:
+                self._task_requests += 1
+            try:
+                return await self._request(project, config, method, endpoint, body=body, params=params)
+            finally:
+                self._task_requests -= 1
+        return await self._request(project, config, method, endpoint, body=body, params=params)
+
+    async def _request(
+        self, project: str, config: AppConfig, method: str, endpoint: str,
+        *, body: dict | None = None, params: dict[str, str | int] | None = None,
+    ) -> object:
         server = await self.ensure(project, config)
         try:
             response = await server.client.request(
@@ -133,6 +149,38 @@ class WorkspaceManager:
             return response.json()
         except ValueError as exc:
             raise WorkspaceError("OpenCode 返回了无法解析的数据", 502) from exc
+
+    async def update_skills(self, operation: Callable[[], dict]) -> dict:
+        """Refresh native skill/command caches without interrupting active sessions."""
+        async with self._skill_changes, self._lock:
+            if self._task_requests:
+                raise WorkspaceError("工作区有任务正在运行，请任务结束后再修改技能", 409)
+            active = [(path, server) for path, server in self._servers.items()
+                      if server.process.poll() is None]
+            for path, server in active:
+                try:
+                    response = await server.client.get("/session/status", params={"directory": path})
+                    response.raise_for_status()
+                    statuses = response.json()
+                    if not isinstance(statuses, dict):
+                        raise ValueError("invalid session statuses")
+                except (httpx.HTTPError, ValueError) as exc:
+                    raise WorkspaceError("无法确认 OpenCode 任务状态，请稍后重试", 503) from exc
+                if any(not isinstance(status, dict) or status.get("type") != "idle"
+                       for status in statuses.values()):
+                    raise WorkspaceError("工作区有任务正在运行，请任务结束后再修改技能", 409)
+            result = await asyncio.to_thread(operation)
+            for path, server in active:
+                try:
+                    response = await server.client.post("/instance/dispose", params={"directory": path})
+                    response.raise_for_status()
+                except httpx.HTTPError:
+                    # Older/custom binaries may lack dispose; the next request restarts
+                    # the idle process while preserving OpenCode's persisted sessions.
+                    await server.client.aclose()
+                    await self._stop_process(server.process)
+                    self._servers.pop(path, None)
+            return result
 
     async def events(self, project: str, config: AppConfig) -> AsyncIterator[bytes]:
         server = await self.ensure(project, config)

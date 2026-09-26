@@ -202,6 +202,7 @@ function runCleanups() {
 
 const routes = [
   { re: /^#\/workspace$/, nav: "workspace", render: (view) => renderWorkspace(view) },
+  { re: /^#\/skills$/, nav: "skills", render: (view) => renderSkills(view) },
   { re: /^#\/dashboard$/, nav: "dashboard", render: (view) => renderDashboard(view) },
   { re: /^#\/calls$/, nav: "calls", render: (view) => renderCalls(view) },
   { re: /^#\/calls\/(.+)$/, nav: "calls", render: (view, m) => renderCallDetail(view, decodeURIComponent(m[1])) },
@@ -227,7 +228,7 @@ function route() {
     if (m) {
       document.body.classList.toggle("workspace-route", r.nav === "workspace");
       setNav(r.nav);
-      document.title = "Sona Code · " + ({ workspace: "工作区", dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", terminal: "终端", settings: "设置" }[r.nav] || "");
+      document.title = "Sona Code · " + ({ workspace: "工作区", skills: "技能", dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", terminal: "终端", settings: "设置" }[r.nav] || "");
       r.render(view, m);
       return;
     }

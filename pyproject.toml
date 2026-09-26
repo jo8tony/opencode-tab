@@ -12,6 +12,7 @@ dependencies = [
     "uvicorn>=0.29",
     "httpx>=0.27",
     "pydantic>=2.6",
+    "PyYAML>=6.0",
     "pywinpty>=2.2; sys_platform == 'win32'",
     "websockets>=12",
 ]

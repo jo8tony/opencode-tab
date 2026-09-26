@@ -44,7 +44,7 @@ function renderWorkspace(view) {
       </aside>
       <div class="wsp-side-scrim" id="wsp-side-scrim"></div>
       <div class="wsp-main">
-        <nav class="wsp-global-nav" aria-label="主导航"><a class="active" href="#/workspace">工作区</a><a href="#/terminal">OpenCode 终端</a><a href="#/trajectory">轨迹</a><a href="#/calls">调用列表</a><a href="#/dashboard">仪表盘</a><a href="#/settings">设置</a><span class="wsp-nav-spacer"></span><span class="wsp-nav-note">代理观测与开发对话</span></nav>
+        <nav class="wsp-global-nav" aria-label="主导航"><a class="active" href="#/workspace">工作区</a><a href="#/skills">技能</a><a href="#/terminal">OpenCode 终端</a><a href="#/trajectory">轨迹</a><a href="#/calls">调用列表</a><a href="#/dashboard">仪表盘</a><a href="#/settings">设置</a><span class="wsp-nav-spacer"></span><span class="wsp-nav-note">代理观测与开发对话</span></nav>
         <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" fill="currentColor"/></svg></button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span></header>
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
@@ -1434,6 +1434,7 @@ function renderWorkspace(view) {
     { name: "summarize", description: "压缩当前对话上下文（/compact 别名）" },
     { name: "models", description: "选择 Provider 和模型" },
     { name: "agents", description: "选择 Agent" },
+    { name: "skills", description: "选择已启用的技能" },
     { name: "stop", description: "停止当前任务" },
     { name: "settings", description: "打开设置" },
   ];
@@ -1565,10 +1566,50 @@ function renderWorkspace(view) {
   }
 
   function selectCommand(command) {
+    if (command.name === "skills") { hideAutocomplete(); void openSkillPicker(); return; }
     input.value = `/${command.name} `;
     input.setSelectionRange(input.value.length, input.value.length);
     hideAutocomplete();
     input.focus();
+  }
+
+  async function openSkillPicker() {
+    if (!state.projectId) { toast("请先选择项目", "error"); return; }
+    hideAutocomplete();
+    closeModelPicker(); closeAgentPicker(); closeVariantPicker();
+    const projectId = state.projectId;
+    const dialog = createSkillDialog("选择技能");
+    const search = el("input", { type: "search", placeholder: "搜索已启用的技能", "aria-label": "搜索已启用的技能" });
+    const list = el("div", { class: "skill-picker-list" }, el("p", { text: "正在读取技能…" }));
+    dialog.body.append(el("p", { text: "选择技能后补充任务并发送。也可以直接描述任务，让 AI 自动选择。" }), search, list,
+      el("div", { class: "wsp-modal-actions" }, el("a", { class: "wsp-mini", href: "#/skills", text: "管理技能" })));
+    search.focus();
+    try {
+      const data = await api(`workspace/projects/${encodeURIComponent(projectId)}/skills`, { silent: true });
+      if (!alive() || !dialog.alive() || state.projectId !== projectId) return;
+      function drawSkills() {
+        const query = search.value.trim().toLocaleLowerCase();
+        const matches = (data.items || []).filter((item) => `${item.name} ${item.description}`.toLocaleLowerCase().includes(query));
+        list.replaceChildren();
+        for (const skill of matches) list.append(el("button", { class: "skill-picker-option", type: "button", onclick: () => {
+          const draft = input.value.trim();
+          const argumentsText = draft.startsWith("/skills") ? draft.replace(/^\/skills(?:\s+|$)/, "") : draft.startsWith("/") ? "" : draft;
+          input.value = `/${skill.name} ${argumentsText}`;
+          if (!state.commands.some((item) => item.name === skill.name)) state.commands.push({ name: skill.name, description: skill.description, source: "skill" });
+          dialog.close(); input.focus(); input.setSelectionRange(input.value.length, input.value.length);
+        } }, el("strong", { text: skill.name }), el("span", { text: skill.description })));
+        if (!matches.length) list.append(el("p", { text: query ? "没有匹配的技能" : "暂无可用技能，请在技能菜单中导入并启用。" }));
+        if (data.unavailable?.length) list.append(el("p", { class: "wsp-question-error", text: `以下技能未被 OpenCode 加载或存在同名命令：${data.unavailable.join("、")}` }));
+      }
+      search.addEventListener("input", drawSkills);
+      search.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowDown") { event.preventDefault(); list.querySelector("button")?.focus(); }
+        if (event.key === "Enter") { event.preventDefault(); list.querySelector("button")?.click(); }
+      });
+      drawSkills();
+    } catch (error) {
+      if (dialog.alive()) list.replaceChildren(el("p", { class: "wsp-question-error", role: "alert", text: "读取技能失败：" + detail(error) }));
+    }
   }
 
   async function executeBuiltIn(name) {
@@ -1580,6 +1621,7 @@ function renderWorkspace(view) {
       await performSessionAction(state.projectId, activeSession(), "summarize");
       return true;
     }
+    if (name === "skills") { await openSkillPicker(); return true; }
     if (name === "models") { input.value = ""; openModelPicker(); return true; }
     if (name === "agents") { input.value = ""; agentSelect.focus(); return true; }
     if (name === "settings") { location.hash = "#/settings"; return true; }

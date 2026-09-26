@@ -13,6 +13,8 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from llm_api_proxy_recorder.admin.api import router as admin_router
+from llm_api_proxy_recorder.admin.skills import SkillStore
+from llm_api_proxy_recorder.admin.skill_routes import router as skills_router
 from llm_api_proxy_recorder.config import CONFIG_PATH, AppConfig, resolved_records_dir
 from llm_api_proxy_recorder.proxy.client import UpstreamClient
 from llm_api_proxy_recorder.proxy.handler import proxy_endpoint
@@ -67,6 +69,7 @@ class RuntimeState:
         self.terminal = TerminalManager()
         self.terminal_projects = TerminalProjectStore(config_path)
         self.workspace = WorkspaceManager()
+        self.skills = SkillStore()
 
     async def apply_config(self, new_cfg: AppConfig) -> None:
         """热更新：换 config 引用；出站代理变化时重建客户端；记录目录变化时重建 store。"""
@@ -132,6 +135,7 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
 
     # 管理 API 路由集（ping 之后、兜底代理路由之前）
     app.include_router(admin_router, prefix=f"{cfg.server.admin_prefix}/api")
+    app.include_router(skills_router, prefix=f"{cfg.server.admin_prefix}/api")
 
     # 终端 API（REST + WebSocket，同样先于兜底代理路由注册）
     app.include_router(terminal_router, prefix=f"{cfg.server.admin_prefix}/api")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
@@ -428,6 +429,15 @@ class CommandBody(BaseModel):
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/command")
 async def run_command(project_id: str, session_id: str, body: CommandBody, request: Request):
     path = _project_path(request, project_id)
+    installed = await asyncio.to_thread(request.app.state.runtime.skills.list)
+    managed = next((item for item in installed["items"]
+                    if item["name"] == body.command), None)
+    if managed:
+        if not managed["enabled"] or managed.get("error"):
+            raise HTTPException(status_code=409, detail="该技能已停用或格式无效，请重新选择技能")
+        available = await _native_managed_skill_names(request, path, [managed])
+        if body.command not in available:
+            raise HTTPException(status_code=409, detail="OpenCode 未加载该技能或存在同名技能/命令，请检查配置")
     payload: dict = {"command": body.command, "arguments": body.arguments}
     if body.provider_id and body.model_id:
         payload["model"] = f"{body.provider_id}/{body.model_id}"
@@ -436,6 +446,36 @@ async def run_command(project_id: str, session_id: str, body: CommandBody, reque
     if body.variant:
         payload["variant"] = body.variant
     return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/command", payload)
+
+
+async def _native_managed_skill_names(request: Request, path: str, installed: list[dict]) -> set[str]:
+    commands, skills = await asyncio.gather(
+        _opencode(request, path, "GET", "/command"),
+        _opencode(request, path, "GET", "/skill"),
+    )
+    names = {item.get("name") for item in commands
+             if isinstance(item, dict) and item.get("source") == "skill"}
+    def matching_locations() -> set[str]:
+        def canonical(value: str | Path) -> str:
+            return os.path.normcase(str(Path(value).resolve()))
+
+        locations = {item.get("name"): canonical(item["location"])
+                     for item in skills if isinstance(item, dict) and isinstance(item.get("location"), str)}
+        return {item["name"] for item in installed if item["name"] in names and
+                locations.get(item["name"]) == canonical(Path(item["path"]) / "SKILL.md")}
+
+    return await asyncio.to_thread(matching_locations)
+
+
+@router.get("/workspace/projects/{project_id}/skills")
+async def project_skills(project_id: str, request: Request) -> dict:
+    path = _project_path(request, project_id)
+    installed = await asyncio.to_thread(request.app.state.runtime.skills.list)
+    enabled = [item for item in installed["items"]
+               if item["enabled"] and not item.get("error")]
+    names = await _native_managed_skill_names(request, path, enabled)
+    return {"items": [item for item in enabled if item["name"] in names],
+            "unavailable": [item["name"] for item in enabled if item["name"] not in names]}
 
 
 class ShellBody(BaseModel):

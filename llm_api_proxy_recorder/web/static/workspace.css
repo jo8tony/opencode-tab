@@ -40,6 +40,44 @@
 .wsp-global-nav a { flex: none; display: flex; align-items: center; padding: 0 12px; border-bottom: 2px solid transparent; color: var(--text-dim); font-size: 11.5px; font-weight: 650; text-decoration: none; white-space: nowrap; }
 .wsp-global-nav a:hover { color: var(--text); background: #f2f5fa; }
 .wsp-global-nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Skill management uses the same local workspace visual language. */
+.skill-page-head, .skill-toolbar, .skill-card, .skill-card-title, .skill-card-actions, .skill-dialog-head { display: flex; align-items: center; gap: 12px; }
+.skill-page-head { justify-content: space-between; margin-bottom: 22px; }
+.skill-page-head h1 { margin: 0 0 8px; font-size: 24px; }
+.skills-page p { color: var(--text-dim); line-height: 1.7; margin: 8px 0; }
+.skill-guide { background: #fbfcfe; }
+.skill-storage-path { display: inline-block; max-width: 100%; overflow-wrap: anywhere; color: var(--text-faint); font: 11px var(--mono); line-height: 1.7; }
+.skill-toolbar { margin-bottom: 16px; flex-wrap: wrap; }
+.skill-toolbar input { flex: 1; min-width: 160px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.skill-count { color: var(--text-dim); font-size: 12px; }
+.skill-card { justify-content: space-between; margin-bottom: 12px; }
+.skill-card-copy { min-width: 0; flex: 1; }
+.skill-card-title { flex-wrap: wrap; gap: 10px; }
+.skill-card-title h2 { margin: 0; }
+.skill-card-title h2::before { display: none; }
+.skill-card-copy p { font-size: 13px; white-space: pre-line; overflow-wrap: anywhere; }
+.skill-card-actions { flex: none; }
+.skill-state { padding: 3px 8px; border-radius: 20px; color: var(--text-dim); background: var(--gray-soft); font-size: 11px; }
+.skill-state.enabled { color: var(--green); background: var(--green-soft); }
+.skill-disabled { background: var(--bg-soft); }
+.skill-dialog { max-height: 78vh; overflow-y: auto; }
+.skill-dialog-head { justify-content: space-between; margin-bottom: 10px; }
+.skill-dialog-head h2 { margin: 0; }
+.skill-dialog > input { margin-bottom: 10px; }
+.skill-picker-list { max-height: 42vh; overflow-y: auto; }
+.skill-picker-option { width: 100%; padding: 12px; display: flex; flex-direction: column; gap: 6px; text-align: left; border: 1px solid var(--border); border-radius: 8px; background: #fff; margin-bottom: 8px; cursor: pointer; }
+.skill-picker-option:hover, .skill-picker-option:focus-visible { background: var(--accent-soft); border-color: var(--accent); }
+.skill-picker-option span { color: var(--text-dim); font-size: 12px; white-space: pre-line; }
+.skill-directory-browser { margin-top: 12px; padding: 10px; max-height: 32vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+.skill-browser-path { overflow-wrap: anywhere; font: 11px var(--mono); color: var(--text-dim); padding-bottom: 8px; }
+.skill-directory-option { display: block; width: 100%; border: 0; padding: 7px; text-align: left; background: transparent; cursor: pointer; border-radius: 5px; }
+.skill-directory-option:hover { background: var(--accent-soft); }
+@media (max-width: 700px) {
+  .skill-card { align-items: flex-start; flex-direction: column; }
+  .skill-card-actions { width: 100%; justify-content: flex-end; }
+  .skill-page-head { align-items: flex-start; }
+}
 .wsp-nav-spacer { flex: 1; }
 .wsp-nav-note { align-self: center; flex: none; color: var(--text-faint); font-size: 10px; white-space: nowrap; }
 .wsp-head { min-height: 73px; padding: 13px 27px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
