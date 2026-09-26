@@ -17,6 +17,7 @@ function renderWorkspace(view) {
   let fileMatches = [];
   let fileMentionRange = null;
   let lastSessionListRefresh = 0;
+  let activeRowMenu = null;
   let followLatest = true;
   let scrollToLatestOnLoad = true;
   const state = {
@@ -402,6 +403,16 @@ function renderWorkspace(view) {
   }
 
   function closeRowMenus() {
+    if (activeRowMenu) {
+      const { menu, trigger, wrapper } = activeRowMenu;
+      menu.hidden = true;
+      menu.classList.remove("wsp-action-menu-floating");
+      menu.style.removeProperty("left");
+      menu.style.removeProperty("top");
+      wrapper.append(menu);
+      trigger.setAttribute("aria-expanded", "false");
+      activeRowMenu = null;
+    }
     sideList.querySelectorAll(".wsp-action-menu").forEach((menu) => { menu.hidden = true; });
     sideList.querySelectorAll('[aria-haspopup="menu"]').forEach((button) => button.setAttribute("aria-expanded", "false"));
   }
@@ -417,13 +428,29 @@ function renderWorkspace(view) {
       onclick: () => {
         const open = menu.hidden;
         closeRowMenus();
-        menu.hidden = !open;
-        trigger.setAttribute("aria-expanded", String(open));
+        if (open) {
+          // Render outside the scrolling sidebar so ancestors cannot clip it.
+          document.body.append(menu);
+          menu.classList.add("wsp-action-menu-floating");
+          menu.hidden = false;
+          activeRowMenu = { menu, trigger, wrapper };
+          const anchor = trigger.getBoundingClientRect();
+          const bounds = menu.getBoundingClientRect();
+          const margin = 8;
+          const below = window.innerHeight - anchor.bottom - margin - 5;
+          const above = anchor.top - margin - 5;
+          const top = below >= bounds.height || below >= above
+            ? anchor.bottom + 5 : anchor.top - bounds.height - 5;
+          menu.style.left = `${Math.max(margin, Math.min(anchor.right - bounds.width, window.innerWidth - bounds.width - margin))}px`;
+          menu.style.top = `${Math.max(margin, Math.min(top, window.innerHeight - bounds.height - margin))}px`;
+          trigger.setAttribute("aria-expanded", "true");
+        }
       } }, el("svg", { viewBox: "0 0 20 20", "aria-hidden": "true" },
         el("circle", { cx: "5", cy: "10", r: "1.5" }),
         el("circle", { cx: "10", cy: "10", r: "1.5" }),
         el("circle", { cx: "15", cy: "10", r: "1.5" })));
-    return el("span", { class: "wsp-row-menu-wrap" }, trigger, menu);
+    const wrapper = el("span", { class: "wsp-row-menu-wrap" }, trigger, menu);
+    return wrapper;
   }
 
   function openRenameDialog(projectId, session) {
@@ -500,6 +527,7 @@ function renderWorkspace(view) {
   }
 
   function renderSidebar() {
+    closeRowMenus();
     sideList.replaceChildren();
     view.querySelector("#wsp-project-count").textContent = `${state.projects.length} 个项目`;
     const query = state.search.trim().toLocaleLowerCase();
@@ -1807,8 +1835,23 @@ function renderWorkspace(view) {
 
   view.querySelector("#wsp-new").addEventListener("click", openAddProject);
   const outsideActions = (event) => {
-    if (!event.target.closest(".wsp-row-menu-wrap")) closeRowMenus();
+    if (!event.target.closest(".wsp-row-menu-wrap, .wsp-action-menu")) closeRowMenus();
   };
+  const rowMenuKeydown = (event) => {
+    if (event.key === "Escape" && activeRowMenu) {
+      const trigger = activeRowMenu.trigger;
+      closeRowMenus();
+      trigger.focus({ preventScroll: true });
+    }
+  };
+  sideList.addEventListener("scroll", closeRowMenus, { passive: true });
+  window.addEventListener("resize", closeRowMenus);
+  document.addEventListener("keydown", rowMenuKeydown);
+  addCleanup(() => {
+    closeRowMenus();
+    window.removeEventListener("resize", closeRowMenus);
+    document.removeEventListener("keydown", rowMenuKeydown);
+  });
   document.addEventListener("pointerdown", outsideActions);
   addCleanup(() => document.removeEventListener("pointerdown", outsideActions));
   view.querySelector("#wsp-abort").addEventListener("click", async () => {

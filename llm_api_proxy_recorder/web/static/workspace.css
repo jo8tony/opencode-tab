@@ -562,3 +562,6 @@
 @media (hover: none), (pointer: coarse) {
   .wsp-message-actions { opacity: 1; }
 }
+
+/* Sidebar action menus float above scrolling and transformed containers. */
+.wsp-action-menu.wsp-action-menu-floating { position: fixed; z-index: 60; right: auto; bottom: auto; box-sizing: border-box; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; }
